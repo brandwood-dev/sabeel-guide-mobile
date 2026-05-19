@@ -2,7 +2,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 
-const DEFAULT_SERVER_BASE_URL = 'http://192.168.1.194:3001';
+const DEFAULT_SERVER_BASE_URL = 'http://192.168.1.14:3001';
 
 const normalizeServerBaseUrl = (value: string) => {
     const trimmed = String(value || '').trim().replace(/\/+$/, '');
@@ -202,6 +202,14 @@ export const freelanceGroupsApi = {
 
 export const trackingApi = {
     getMyPilgrimsPositions: () => api.get('/tracking/guide/pilgrims-positions'),
+    upsertMyGuidePosition: (payload: {
+        latitude: number;
+        longitude: number;
+        accuracy?: number | null;
+        speed?: number | null;
+        heading?: number | null;
+        deviceTimestamp?: string | null;
+    }) => api.post('/tracking/guide/positions', payload),
 };
 
 export const agenciesApi = {
@@ -243,6 +251,9 @@ export const notificationsApi = {
     listMine: (params?: { limit?: number; offset?: number }) =>
         api.get('/notifications/me', { params }),
     markRead: (id: string) => api.patch(`/notifications/${id}/read`),
+    updateSosStatus: (id: string, status: 'active' | 'in_progress' | 'resolved') =>
+        api.patch(`/notifications/${id}/sos-status`, { status }),
+    deleteOne: (id: string) => api.delete(`/notifications/${id}`),
     markAllRead: () => api.post('/notifications/me/mark-all-read'),
     clearAll: () => api.delete('/notifications/me'),
 };

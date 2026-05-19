@@ -74,7 +74,9 @@ export const NotificationWrapper: React.FC<{ children: React.ReactNode }> = ({ c
                 messagingSocket = await createMessagingSocket();
 
                 messagingSocket.on('message_created', (payload: any) => {
-                    const conversationId = payload?.conversationId ? String(payload.conversationId) : '';
+                    const conversationId = payload?.conversation?.id
+                        ? String(payload.conversation.id)
+                        : (payload?.conversationId ? String(payload.conversationId) : '');
                     const message = payload?.message || payload;
                     const senderUserId = message?.senderUserId ? String(message.senderUserId) : '';
                     const currentUserId = user?.id ? String(user.id) : '';

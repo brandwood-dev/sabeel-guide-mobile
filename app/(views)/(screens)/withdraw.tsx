@@ -12,10 +12,13 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme } from '@/theme';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { useRouter } from 'expo-router';
 import { CustomAlert } from '@/components/common/CustomAlert';
 
 const WithdrawScreen = () => {
+    const colors = useThemeColors() as any;
+    const isDarkMode = useIsDarkMode();
     const router = useRouter();
     const [amount, setAmount] = useState('');
     const [selectedMethod, setSelectedMethod] = useState('bank'); // bank or card
@@ -58,12 +61,12 @@ const WithdrawScreen = () => {
     };
 
     return (
-        <SafeAreaView style={styles.container}>
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                    <Ionicons name="arrow-back" size={24} color={theme.colors.secondary} />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+            <View style={[styles.header, { backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+                <TouchableOpacity onPress={() => router.back()} style={[styles.backBtn, { backgroundColor: isDarkMode ? '#2E3B56' : '#f8f9fa' }]}>
+                    <Ionicons name="arrow-back" size={24} color={colors.text} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Retraire l&apos;argent</Text>
+                <Text style={[styles.headerTitle, { color: colors.text }]}>Retraire l&apos;argent</Text>
                 <View style={{ width: 40 }} />
             </View>
 
@@ -72,70 +75,70 @@ const WithdrawScreen = () => {
                 style={{ flex: 1 }}
             >
                 <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                    <View style={styles.card}>
-                        <Text style={styles.label}>Montant à retirer (TND)</Text>
-                        <View style={styles.amountInputWrap}>
-                            <Text style={styles.currencyPrefix}>TND</Text>
+                    <View style={[styles.card, { backgroundColor: colors.surface }]}>
+                        <Text style={[styles.label, { color: colors.textSecondary }]}>Montant à retirer (TND)</Text>
+                        <View style={[styles.amountInputWrap, { borderBottomColor: colors.primary }]}>
+                            <Text style={[styles.currencyPrefix, { color: colors.text }]}>TND</Text>
                             <TextInput
-                                style={styles.amountInput}
+                                style={[styles.amountInput, { color: colors.text }]}
                                 placeholder="0.00"
                                 keyboardType="numeric"
                                 value={amount}
                                 onChangeText={setAmount}
-                                placeholderTextColor="#999"
+                                placeholderTextColor={colors.textSecondary}
                             />
                         </View>
-                        <Text style={styles.availableInfo}>Solde disponible: 1,240 TND</Text>
+                        <Text style={[styles.availableInfo, { color: colors.primary }]}>Solde disponible: 1,240 TND</Text>
                     </View>
 
-                    <Text style={styles.sectionTitle}>Méthode de réception</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>Méthode de réception</Text>
 
                     <TouchableOpacity
-                        style={[styles.methodCard, selectedMethod === 'bank' && styles.selectedMethod]}
+                        style={[styles.methodCard, { backgroundColor: colors.surface, borderColor: colors.border }, selectedMethod === 'bank' && [styles.selectedMethod, { borderColor: colors.primary, backgroundColor: isDarkMode ? 'rgba(58, 125, 68, 0.08)' : theme.colors.primary + '05' }]]}
                         onPress={() => setSelectedMethod('bank')}
                     >
-                        <View style={styles.methodIconBg}>
-                            <MaterialCommunityIcons name="bank" size={24} color={theme.colors.primary} />
+                        <View style={[styles.methodIconBg, { backgroundColor: isDarkMode ? 'rgba(58, 125, 68, 0.15)' : theme.colors.primary + '10' }]}>
+                            <MaterialCommunityIcons name="bank" size={24} color={colors.primary} />
                         </View>
                         <View style={styles.methodInfo}>
-                            <Text style={styles.methodTitle}>Virement Bancaire (Zitouna)</Text>
-                            <Text style={styles.methodSub}>FR76 1234 **** 1234</Text>
+                            <Text style={[styles.methodTitle, { color: colors.text }]}>Virement Bancaire (Zitouna)</Text>
+                            <Text style={[styles.methodSub, { color: colors.textSecondary }]}>FR76 1234 **** 1234</Text>
                         </View>
                         <Ionicons
                             name={selectedMethod === 'bank' ? "radio-button-on" : "radio-button-off"}
                             size={22}
-                            color={selectedMethod === 'bank' ? theme.colors.primary : '#D1D1D6'}
+                            color={selectedMethod === 'bank' ? colors.primary : (isDarkMode ? '#2E3B56' : '#D1D1D6')}
                         />
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                        style={[styles.methodCard, selectedMethod === 'card' && styles.selectedMethod]}
+                        style={[styles.methodCard, { backgroundColor: colors.surface, borderColor: colors.border }, selectedMethod === 'card' && [styles.selectedMethod, { borderColor: colors.primary, backgroundColor: isDarkMode ? 'rgba(58, 125, 68, 0.08)' : theme.colors.primary + '05' }]]}
                         onPress={() => setSelectedMethod('card')}
                     >
-                        <View style={[styles.methodIconBg, { backgroundColor: '#F8F9FA' }]}>
-                            <MaterialCommunityIcons name="credit-card" size={24} color={theme.colors.secondary} />
+                        <View style={[styles.methodIconBg, { backgroundColor: isDarkMode ? '#2E3B56' : '#F8F9FA' }]}>
+                            <MaterialCommunityIcons name="credit-card" size={24} color={isDarkMode ? '#FF9800' : theme.colors.secondary} />
                         </View>
                         <View style={styles.methodInfo}>
-                            <Text style={styles.methodTitle}>Carte Bancaire (VISA)</Text>
-                            <Text style={styles.methodSub}>**** **** **** 4582</Text>
+                            <Text style={[styles.methodTitle, { color: colors.text }]}>Carte Bancaire (VISA)</Text>
+                            <Text style={[styles.methodSub, { color: colors.textSecondary }]}>**** **** **** 4582</Text>
                         </View>
                         <Ionicons
                             name={selectedMethod === 'card' ? "radio-button-on" : "radio-button-off"}
                             size={22}
-                            color={selectedMethod === 'card' ? theme.colors.primary : '#D1D1D6'}
+                            color={selectedMethod === 'card' ? colors.primary : (isDarkMode ? '#2E3B56' : '#D1D1D6')}
                         />
                     </TouchableOpacity>
 
-                    <View style={styles.infoBox}>
-                        <Ionicons name="information-circle" size={20} color="#666" />
-                        <Text style={styles.infoText}>
+                    <View style={[styles.infoBox, { backgroundColor: isDarkMode ? '#1E2638' : '#F1F3F5' }]}>
+                        <Ionicons name="information-circle" size={20} color={colors.textSecondary} />
+                        <Text style={[styles.infoText, { color: colors.textSecondary }]}>
                             Les retraits sont traités sous 48h ouvrables. Des frais de service mineurs peuvent s&apos;appliquer selon votre banque.
                         </Text>
                     </View>
                 </ScrollView>
 
-                <View style={styles.footer}>
-                    <TouchableOpacity style={styles.withdrawBtn} onPress={handleWithdrawRequest}>
+                <View style={[styles.footer, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+                    <TouchableOpacity style={[styles.withdrawBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }]} onPress={handleWithdrawRequest}>
                         <Text style={styles.withdrawBtnText}>Confirmer le retrait</Text>
                     </TouchableOpacity>
                 </View>

@@ -15,6 +15,7 @@ import {
     FlatList,
     Modal,
     Vibration,
+    RefreshControl,
 } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
@@ -22,18 +23,21 @@ import MapboxGL from '@rnmapbox/maps';
 import BottomSheet, { BottomSheetScrollView, BottomSheetView } from '@gorhom/bottom-sheet';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { theme } from '@/theme';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useUser } from '@/context/UserContext';
 import * as Location from 'expo-location';
 import * as Haptics from 'expo-haptics';
 import { Audio } from 'expo-av';
+import * as Speech from 'expo-speech';
 import { sabeelGuideGroupsApi, freelanceGroupsApi, reservationApi, trackingApi, notificationsApi } from '@/services/api';
 import { createMessagingSocket } from '@/services/messagingSocket';
 import { getUserAvatarUrl } from '@/services/media';
 import { messagingApi } from '@/services/api';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { notificationService } from '@/services/notificationService';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 
 // Set Mapbox Access Token
 const mapboxToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || '';
@@ -45,7 +49,54 @@ if (mapboxToken) {
 
 const { width, height } = Dimensions.get('window');
 
-import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
+const inMemoryTrackingCache: Record<string, { groups: any[]; pilgrims: any[]; ts: number } | undefined> = {};
+
+const ThreeDots = ({ color }: { color: string }) => {
+    const a1 = useRef(new RNAnimated.Value(0)).current;
+    const a2 = useRef(new RNAnimated.Value(0)).current;
+    const a3 = useRef(new RNAnimated.Value(0)).current;
+
+    useEffect(() => {
+        const make = (v: RNAnimated.Value, delay: number) =>
+            RNAnimated.loop(
+                RNAnimated.sequence([
+                    RNAnimated.delay(delay),
+                    RNAnimated.timing(v, { toValue: 1, duration: 260, useNativeDriver: true }),
+                    RNAnimated.timing(v, { toValue: 0, duration: 260, useNativeDriver: true }),
+                    RNAnimated.delay(360),
+                ]),
+            );
+
+        const l1 = make(a1, 0);
+        const l2 = make(a2, 120);
+        const l3 = make(a3, 240);
+        l1.start();
+        l2.start();
+        l3.start();
+        return () => {
+            l1.stop();
+            l2.stop();
+            l3.stop();
+        };
+    }, [a1, a2, a3]);
+
+    const dot = (v: RNAnimated.Value) => ({
+        opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }),
+        transform: [
+            {
+                translateY: v.interpolate({ inputRange: [0, 1], outputRange: [2, -3] }),
+            },
+        ],
+    });
+
+    return (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <RNAnimated.View style={[{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }, dot(a1)]} />
+            <RNAnimated.View style={[{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }, dot(a2)]} />
+            <RNAnimated.View style={[{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }, dot(a3)]} />
+        </View>
+    );
+};
 
 type BackendGroup = {
     id: string;
@@ -70,6 +121,8 @@ type BackendPilgrimPosition = {
 };
 
 const TrackingScreen = () => {
+    const colors = useThemeColors() as any;
+    const isDarkMode = useIsDarkMode();
     const navigation = useNavigation();
     const router = useRouter();
     const params = useLocalSearchParams();
@@ -78,8 +131,13 @@ const TrackingScreen = () => {
     const [sosModalVisible, setSosModalVisible] = useState(false);
     const [sosAlerts, setSosAlerts] = useState<any[]>([]);
 
+    // SOS workflow status per pilgrim (active/red, in_progress/orange, resolved/green)
+    const [sosStatusByPilgrimId, setSosStatusByPilgrimId] = useState<Record<string, 'active' | 'in_progress' | 'resolved'>>({});
+
     const [groups, setGroups] = useState<any[]>([]);
     const [pilgrims, setPilgrims] = useState<any[]>([]);
+    const [initialLoading, setInitialLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const positionsByPilgrimIdRef = useRef<Record<string, { latitude: number; longitude: number; updatedAt?: string }>>({});
 
     const [forceUpdate, setForceUpdate] = useState(0);
@@ -101,20 +159,157 @@ const TrackingScreen = () => {
     const socketRef = useRef<any>(null);
 
     const alarmSoundRef = useRef<Audio.Sound | null>(null);
+    const navCueSoundRef = useRef<Audio.Sound | null>(null);
     const [sosBlinkOn, setSosBlinkOn] = useState(false);
     const sosActivePilgrimIdsRef = useRef<Record<string, number>>({});
+    const sosPulseAnim = useRef(new RNAnimated.Value(0)).current;
+    const sosPulseLoopRef = useRef<RNAnimated.CompositeAnimation | null>(null);
+
+    const lastNavAnnounceBucketRef = useRef<string>('');
+    const lastNavAnnounceAtRef = useRef<number>(0);
+
+    const getLatestPilgrimPosition = useCallback(
+        (pilgrimId: string) => {
+            const pos = positionsByPilgrimIdRef.current?.[String(pilgrimId)];
+            const lat = pos?.latitude !== null && pos?.latitude !== undefined ? Number(pos.latitude) : NaN;
+            const lng = pos?.longitude !== null && pos?.longitude !== undefined ? Number(pos.longitude) : NaN;
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+            return { coords: [lng, lat] as any, updatedAt: pos?.updatedAt ? String(pos.updatedAt) : undefined };
+        },
+        [],
+    );
+
+    const haversineMeters = useCallback((start: number[], end: number[]) => {
+        try {
+            const R = 6371000;
+            const lat1 = (start[1] * Math.PI) / 180;
+            const lat2 = (end[1] * Math.PI) / 180;
+            const dLat = ((end[1] - start[1]) * Math.PI) / 180;
+            const dLon = ((end[0] - start[0]) * Math.PI) / 180;
+            const sinDLat = Math.sin(dLat / 2);
+            const sinDLon = Math.sin(dLon / 2);
+            const aa = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLon * sinDLon;
+            const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+            return R * c;
+        } catch (e) {
+            return Infinity;
+        }
+    }, []);
+
+    const getSosVisual = useCallback(
+        (pilgrimId: string): { isSos: boolean; status: 'active' | 'in_progress' | 'resolved'; colorOn: string; colorOff: string } => {
+            const pid = String(pilgrimId || '').trim();
+            const status = sosStatusByPilgrimId[pid] || 'active';
+            const isSos = Boolean(sosActivePilgrimIdsRef.current[pid]);
+            if (!isSos) {
+                return { isSos: false, status: 'active', colorOn: '#DC2626', colorOff: '#991B1B' };
+            }
+
+            if (status === 'resolved') {
+                return { isSos: true, status, colorOn: '#16A34A', colorOff: '#15803D' };
+            }
+            if (status === 'in_progress') {
+                return { isSos: true, status, colorOn: '#FDBA74', colorOff: '#FB923C' };
+            }
+            return { isSos: true, status: 'active', colorOn: '#DC2626', colorOff: '#991B1B' };
+        },
+        [sosStatusByPilgrimId],
+    );
 
     const stopAlarmSound = useCallback(async () => {
         try {
             if (alarmSoundRef.current) {
-                await alarmSoundRef.current.stopAsync().catch(() => {});
-                await alarmSoundRef.current.unloadAsync().catch(() => {});
+                await alarmSoundRef.current.stopAsync().catch((e) => {});
+                await alarmSoundRef.current.unloadAsync().catch((e) => {});
                 alarmSoundRef.current = null;
             }
-        } catch {
+        } catch (e) {
             // ignore
         }
     }, []);
+
+    const stopNavCueSound = useCallback(async () => {
+        try {
+            if (navCueSoundRef.current) {
+                await navCueSoundRef.current.stopAsync().catch((e) => {});
+                await navCueSoundRef.current.unloadAsync().catch((e) => {});
+                navCueSoundRef.current = null;
+            }
+        } catch (e) {
+            // ignore
+        }
+    }, []);
+
+    const playNavCueSound = useCallback(async () => {
+        try {
+            await stopNavCueSound();
+            await Audio.setAudioModeAsync({
+                playsInSilentModeIOS: true,
+                staysActiveInBackground: false,
+                shouldDuckAndroid: true,
+                playThroughEarpieceAndroid: false,
+            });
+            const { sound } = await Audio.Sound.createAsync(
+                require('../../../assets/sounds/alarm.mp3'),
+                { shouldPlay: true, isLooping: false, volume: 0.25 },
+            );
+            navCueSoundRef.current = sound;
+
+            // Stop quickly to behave like a short cue.
+            setTimeout(() => {
+                stopNavCueSound();
+            }, 900);
+        } catch (e) {
+            // ignore
+        }
+    }, [stopNavCueSound]);
+
+    const stopNavigationVoice = useCallback(() => {
+        try {
+            Speech.stop();
+        } catch (e) {
+            // ignore
+        }
+    }, []);
+
+    const speakNavigation = useCallback((text: string) => {
+        try {
+            if (!text) return;
+            Speech.stop();
+            Speech.speak(text, {
+                language: 'fr-FR',
+                rate: 1.0,
+                pitch: 1.0,
+            });
+        } catch (e) {
+            // ignore
+        }
+    }, []);
+
+    const formatDistanceFr = useCallback((meters: number) => {
+        if (!Number.isFinite(meters)) return '';
+        if (meters < 1000) return `${Math.round(meters)} mètres`;
+        const km = meters / 1000;
+        if (km < 10) return `${km.toFixed(1)} kilomètres`;
+        return `${Math.round(km)} kilomètres`;
+    }, []);
+
+    const computeNavAnnounceBucket = useCallback((meters: number) => {
+        if (!Number.isFinite(meters)) return '';
+        if (meters <= 30) return 'arrive';
+        if (meters <= 50) return '50m';
+        if (meters <= 200) return '200m';
+        if (meters <= 500) return '500m';
+        if (meters <= 1000) return '1km';
+        return 'far';
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            stopNavigationVoice();
+            stopNavCueSound();
+        };
+    }, [stopNavigationVoice, stopNavCueSound]);
 
     const playAlarmSound = useCallback(async () => {
         try {
@@ -126,65 +321,71 @@ const TrackingScreen = () => {
                 playThroughEarpieceAndroid: false,
             });
             const { sound } = await Audio.Sound.createAsync(
-                require('@/../assets/images/sonne.mp3'),
+                require('../../../assets/sounds/alarm.mp3'),
                 { shouldPlay: true, isLooping: true },
             );
             alarmSoundRef.current = sound;
-        } catch {
+        } catch (e) {
             // ignore
         }
     }, [stopAlarmSound]);
 
     const refreshSosAlerts = useCallback(async () => {
         try {
-            const res = await notificationsApi.listMine({ limit: 100, offset: 0 });
-            const items = Array.isArray(res?.data?.items) ? res.data.items : (Array.isArray(res?.data) ? res.data : []);
-            const sos = items.filter((n: any) => {
-                const t = n?.data?.type ? String(n.data.type) : '';
-                return t.toLowerCase() === 'sos' || t.toLowerCase() === 'sos_alert';
+            const uid = String((user as any)?.id || (user as any)?.userId || '').trim();
+            if (!uid) return;
+
+            const res = await notificationsApi.listMine({ limit: 50, offset: 0 });
+            const alerts = Array.isArray(res?.data?.items)
+                ? res.data.items
+                : (Array.isArray(res?.data) ? res.data : (Array.isArray((res as any)?.data?.notifications) ? (res as any).data.notifications : []));
+
+            const onlySos = (alerts || []).filter((a: any) => {
+                const raw =
+                    (a?.data?.type !== undefined ? String(a.data.type) : '') ||
+                    (a?.type !== undefined ? String(a.type) : '') ||
+                    (a?.notificationType !== undefined ? String(a.notificationType) : '');
+                const t = raw.toLowerCase();
+                return t === 'sos' || t === 'sos_alert' || t.includes('sos');
             });
-            setSosAlerts(sos);
-        } catch {
+            setSosAlerts(onlySos);
+
+            // Sync SOS visual/status state from fetched alerts so existing (preloaded) SOS are animated/vibrating
+            const nextStatus: Record<string, 'active' | 'in_progress' | 'resolved'> = {};
+            const now = Date.now();
+            for (const a of onlySos || []) {
+                if (!a || a?.readAt) continue;
+                const data = (a as any)?.data || {};
+                const pidRaw = data?.pilgrim?.id || data?.pilgrimUserId || '';
+                const pid = String(pidRaw || '').trim();
+                if (!pid) continue;
+
+                const raw = String(data?.sosStatus || '').trim().toLowerCase();
+                const status: 'active' | 'in_progress' | 'resolved' =
+                    raw === 'in_progress' || raw === 'inprogress' || raw === 'en_cours' || raw === 'encours'
+                        ? 'in_progress'
+                        : raw === 'resolved'
+                            ? 'resolved'
+                            : 'active';
+
+                nextStatus[pid] = status;
+
+                // Keep blinking marker for all active SOS alerts
+                sosActivePilgrimIdsRef.current[pid] = now;
+            }
+            if (Object.keys(nextStatus).length) {
+                setSosStatusByPilgrimId((prev) => ({ ...prev, ...nextStatus }));
+            }
+        } catch (e) {
             // ignore
         }
-    }, []);
+    }, [user]);
 
     useFocusEffect(
         useCallback(() => {
             refreshSosAlerts();
         }, [refreshSosAlerts]),
     );
-
-    // Realtime SOS handling: vibrate + alarm + refresh + blink marker
-    useEffect(() => {
-        const unsubscribe = notificationService.addListener((n: any) => {
-            const type = String(n?.type || '').toLowerCase();
-            if (type !== 'sos' && type !== 'sos_alert') return;
-
-            const pilgrimId = String((n as any)?.data?.pilgrim?.id || (n as any)?.pilgrim?.id || (n as any)?.data?.pilgrimUserId || '').trim();
-            if (pilgrimId) {
-                sosActivePilgrimIdsRef.current[pilgrimId] = Date.now();
-            }
-
-            // Strong haptic + vibration pattern
-            try {
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            } catch {}
-            try {
-                Vibration.vibrate([0, 800, 300, 800, 300, 800]);
-            } catch {}
-
-            playAlarmSound();
-            refreshSosAlerts();
-            setSosModalVisible(true);
-            setSelectedPilgrim(pilgrimId);
-            bottomSheetRef.current?.snapToIndex(0);
-        });
-
-        return () => {
-            unsubscribe();
-        };
-    }, [playAlarmSound, refreshSosAlerts, setSelectedPilgrim]);
 
     // Blink loop + cleanup expired SOS (2 minutes)
     useEffect(() => {
@@ -200,6 +401,217 @@ const TrackingScreen = () => {
         }, 600);
         return () => clearInterval(id);
     }, []);
+
+    const stopSosVibration = useCallback(() => {
+        try {
+            if (sosVibrationIntervalRef.current) {
+                clearInterval(sosVibrationIntervalRef.current);
+                sosVibrationIntervalRef.current = null;
+            }
+        } catch (e) {
+            // ignore
+        }
+    }, []);
+
+    const startSosVibration = useCallback(() => {
+        try {
+            if (sosVibrationIntervalRef.current) return;
+            // Vibrate immediately, then repeat until SOS is no longer active.
+            try {
+                Vibration.vibrate([0, 800, 300, 800, 300, 800]);
+            } catch (e) {
+                // ignore
+            }
+            sosVibrationIntervalRef.current = setInterval(() => {
+                try {
+                    Vibration.vibrate([0, 800, 300, 800, 300, 800]);
+                } catch (e) {
+                    // ignore
+                }
+            }, 3500);
+        } catch (e) {
+            // ignore
+        }
+    }, []);
+
+    const stopSosPulse = useCallback(() => {
+        try {
+            sosPulseAnim.stopAnimation();
+            sosPulseAnim.setValue(0);
+        } catch (e) {
+            // ignore
+        }
+    }, [sosPulseAnim]);
+
+    const startSosPulse = useCallback(() => {
+        try {
+            sosPulseAnim.stopAnimation();
+            sosPulseAnim.setValue(0);
+            RNAnimated.loop(
+                RNAnimated.sequence([
+                    RNAnimated.timing(sosPulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
+                    RNAnimated.timing(sosPulseAnim, { toValue: 0, duration: 0, useNativeDriver: true }),
+                ]),
+            ).start();
+        } catch (e) {
+            // ignore
+        }
+    }, [sosPulseAnim]);
+
+    // Realtime SOS handling: vibrate + alarm + refresh + blink marker
+    useEffect(() => {
+        const unsubscribe = notificationService.addListener((n: any) => {
+            const type = String(n?.type || '').toLowerCase();
+            if (type === 'sos_status') {
+                const pid = String((n as any)?.data?.pilgrimUserId || '').trim();
+                const statusRaw = String((n as any)?.data?.status || '').trim().toLowerCase();
+                if (!pid) return;
+
+                const status: 'active' | 'in_progress' | 'resolved' =
+                    statusRaw === 'in_progress' || statusRaw === 'inprogress' || statusRaw === 'en_cours' || statusRaw === 'encours'
+                        ? 'in_progress'
+                        : statusRaw === 'resolved'
+                            ? 'resolved'
+                            : 'active';
+
+                setSosStatusByPilgrimId((prev) => ({ ...prev, [pid]: status }));
+
+                // Keep marker blinking even when resolved (green) for a short period (cleanup loop will remove later)
+                sosActivePilgrimIdsRef.current[pid] = Date.now();
+
+                if (status === 'active') {
+                    startSosVibration();
+                    startSosPulse();
+                } else {
+                    stopSosVibration();
+                    stopAlarmSound();
+                }
+
+                refreshSosAlerts();
+                return;
+            }
+
+            if (type !== 'sos' && type !== 'sos_alert') return;
+
+            const pilgrimId = String((n as any)?.data?.pilgrim?.id || (n as any)?.pilgrim?.id || (n as any)?.data?.pilgrimUserId || '').trim();
+            if (pilgrimId) {
+                sosActivePilgrimIdsRef.current[pilgrimId] = Date.now();
+                setSosStatusByPilgrimId((prev) => ({ ...prev, [pilgrimId]: 'active' }));
+            }
+
+            // Strong haptic + vibration pattern
+            try {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            } catch (e) {}
+            try {
+                Vibration.vibrate([0, 800, 300, 800, 300, 800]);
+            } catch (e) {}
+
+            // Start continuous vibration + pulse immediately for active SOS
+            startSosVibration();
+            startSosPulse();
+
+            playAlarmSound();
+            refreshSosAlerts();
+            setSosModalVisible(true);
+            setSelectedPilgrim(pilgrimId);
+            bottomSheetRef.current?.snapToIndex(0);
+        });
+
+        return () => {
+            unsubscribe();
+        };
+    }, [playAlarmSound, refreshSosAlerts, setSelectedPilgrim, startSosPulse, startSosVibration, stopAlarmSound, stopSosVibration]);
+
+    // Keep vibration + pulse animation running while there is at least one active SOS alert
+    useEffect(() => {
+        const hasActive =
+            Array.isArray(sosAlerts) &&
+            sosAlerts.some((a: any) => {
+                if (a?.readAt) return false;
+                const pid = String(a?.data?.pilgrim?.id || a?.data?.pilgrimUserId || '').trim();
+                const stRaw = String(a?.data?.sosStatus || '').trim().toLowerCase();
+                const st: 'active' | 'in_progress' | 'resolved' =
+                    stRaw === 'in_progress' || stRaw === 'inprogress' || stRaw === 'en_cours' || stRaw === 'encours'
+                        ? 'in_progress'
+                        : stRaw === 'resolved'
+                            ? 'resolved'
+                            : 'active';
+
+                // Only vibrate for active SOS (not for in_progress)
+                if (pid && sosStatusByPilgrimId[pid]) {
+                    return sosStatusByPilgrimId[pid] === 'active';
+                }
+                return st === 'active';
+            });
+        if (hasActive) {
+            startSosVibration();
+            startSosPulse();
+        } else {
+            stopSosVibration();
+            stopSosPulse();
+            stopAlarmSound();
+        }
+
+        return () => {
+            // no-op
+        };
+    }, [sosAlerts, sosStatusByPilgrimId, startSosVibration, stopSosVibration, startSosPulse, stopSosPulse, stopAlarmSound]);
+
+    const updateSosStatusForNotification = useCallback(
+        async (notificationId: string, pilgrimId: string, status: 'active' | 'in_progress' | 'resolved') => {
+            if (!notificationId || !pilgrimId) return;
+            try {
+                try {
+                    await notificationsApi.updateSosStatus(String(notificationId), status);
+                } catch (e) {
+                    // ignore
+                }
+                setSosStatusByPilgrimId((prev) => ({ ...prev, [String(pilgrimId)]: status }));
+
+                // Always keep marker blinking for some time (cleanup loop will remove)
+                sosActivePilgrimIdsRef.current[String(pilgrimId)] = Date.now();
+
+                if (status !== 'active') {
+                    stopSosVibration();
+                    stopAlarmSound();
+                }
+
+                // Re-fetch to sync UI list/readAt/state
+                refreshSosAlerts();
+            } catch (e) {
+                // ignore
+            }
+        },
+        [refreshSosAlerts, stopAlarmSound, stopSosVibration],
+    );
+
+    // Auto-resolve SOS when navigating and arriving near the pilgrim
+    useEffect(() => {
+        try {
+            if (!navigationGoal?.id) return;
+            const pid = String(navigationGoal.id);
+            if (sosStatusByPilgrimId[pid] !== 'in_progress') return;
+            if (!userLocation || !Array.isArray(userLocation)) return;
+
+            const live = getLatestPilgrimPosition(pid);
+            const target = (live?.coords || navigationGoal?.coords) as any;
+            if (!Array.isArray(target) || !Number.isFinite(target[0]) || !Number.isFinite(target[1])) return;
+
+            const d = haversineMeters(userLocation as any, target as any);
+            if (!Number.isFinite(d) || d > 30) return;
+
+            const n = (sosAlerts || []).find((a: any) => {
+                const apid = String(a?.data?.pilgrim?.id || a?.data?.pilgrimUserId || '').trim();
+                return apid && apid === pid && !a?.readAt;
+            });
+            if (n?.id) {
+                updateSosStatusForNotification(String(n.id), pid, 'resolved');
+            }
+        } catch (e) {
+            // ignore
+        }
+    }, [navigationGoal, userLocation, sosStatusByPilgrimId, sosAlerts, getLatestPilgrimPosition, haversineMeters, updateSosStatusForNotification]);
 
     useEffect(() => {
         return () => {
@@ -224,7 +636,7 @@ const TrackingScreen = () => {
                         zoomLevel: 15,
                         animationDuration: 900,
                     } as any);
-                } catch {
+                } catch (e) {
                     // ignore
                 }
             }, 350);
@@ -253,7 +665,7 @@ const TrackingScreen = () => {
     const [scanned, setScanned] = useState(false);
 
     const bottomSheetRef = useRef<BottomSheet>(null);
-    const cameraRef = useRef<MapboxGL.Camera>(null);
+    const cameraRef = useRef<any>(null);
     const routeSourceRef = useRef<any>(null);
     const slideAnim = useRef(new RNAnimated.Value(300)).current;
     const didInitialFitRef = useRef(false);
@@ -357,25 +769,35 @@ const TrackingScreen = () => {
         }
     }, [selectedGroup, selectedPilgrim]);
 
-    const getLatestPilgrimPosition = useCallback(
-        (pilgrimId: string) => {
-            const pos = positionsByPilgrimIdRef.current?.[String(pilgrimId)];
-            const lat = pos?.latitude !== null && pos?.latitude !== undefined ? Number(pos.latitude) : NaN;
-            const lng = pos?.longitude !== null && pos?.longitude !== undefined ? Number(pos.longitude) : NaN;
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-            return { coords: [lng, lat] as any, updatedAt: pos?.updatedAt ? String(pos.updatedAt) : undefined };
-        },
-        [],
-    );
+    const roleKey = useMemo(() => {
+        const isAgencyRole = userMode === 'agency' || String((user as any)?.activeRole || '') === 'agency';
+        return isAgencyRole ? 'agency' : 'freelance';
+    }, [userMode, (user as any)?.activeRole]);
 
-    const loadTrackingData = useCallback(() => {
+    const loadTrackingData = useCallback((opts?: { force?: boolean; showLoader?: boolean }) => {
         const COLORS = ['#FF5722', '#2196F3', '#9C27B0', '#4CAF50', '#FFC107', '#E91E63'];
         let mounted = true;
 
-        // Reset role-scoped data immediately to avoid mixing between spaces
-        setGroups([]);
-        setPilgrims([]);
-        positionsByPilgrimIdRef.current = {};
+        const cacheKey = `tracking_${roleKey}`;
+        const cached = inMemoryTrackingCache[cacheKey];
+
+        // Show cached data instantly (no loader), then refresh in background.
+        if (!opts?.force && cached && Array.isArray(cached.groups) && Array.isArray(cached.pilgrims)) {
+            setGroups(cached.groups);
+            setPilgrims(cached.pilgrims);
+            setInitialLoading(false);
+        }
+
+        if (opts?.showLoader && (!cached || !Array.isArray(cached.pilgrims) || cached.pilgrims.length === 0)) {
+            setInitialLoading(true);
+        }
+
+        // Only hard-reset if forcing a refresh AND we want a loader.
+        if (opts?.force && opts?.showLoader) {
+            setGroups([]);
+            setPilgrims([]);
+            positionsByPilgrimIdRef.current = {};
+        }
 
         const load = async () => {
             try {
@@ -433,7 +855,7 @@ const TrackingScreen = () => {
                             try {
                                 const detail = await freelanceGroupsApi.getById(String(g.id));
                                 return detail?.data?.group || null;
-                            } catch {
+                            } catch (e) {
                                 return null;
                             }
                         }),
@@ -528,7 +950,9 @@ const TrackingScreen = () => {
                     if (!mounted) return;
                     setGroups([...mappedGroups, mappedSoloGroup]);
                     setPilgrims(mappedPilgrims);
+                    inMemoryTrackingCache[cacheKey] = { groups: [...mappedGroups, mappedSoloGroup], pilgrims: mappedPilgrims, ts: Date.now() };
                     setForceUpdate((x) => x + 1);
+                    setInitialLoading(false);
                     return;
                 }
 
@@ -546,7 +970,7 @@ const TrackingScreen = () => {
                         backendGroups = Array.isArray(groupsRes2.data?.groups)
                             ? groupsRes2.data.groups
                             : (Array.isArray(groupsRes2.data) ? groupsRes2.data : []);
-                    } catch {
+                    } catch (e2) {
                         backendGroups = [];
                     }
                 }
@@ -653,8 +1077,11 @@ const TrackingScreen = () => {
                 if (!mounted) return;
                 setGroups(groupsWithCoords);
                 setPilgrims(mappedPilgrims);
+                inMemoryTrackingCache[cacheKey] = { groups: groupsWithCoords, pilgrims: mappedPilgrims, ts: Date.now() };
+                setInitialLoading(false);
             } catch (e) {
                 console.log('[Tracking] load() failed', e);
+                setInitialLoading(false);
             }
         };
 
@@ -662,7 +1089,18 @@ const TrackingScreen = () => {
         return () => {
             mounted = false;
         };
-    }, [userMode, (user as any)?.activeRole, getLatestPilgrimPosition]);
+    }, [userMode, (user as any)?.activeRole, getLatestPilgrimPosition, roleKey]);
+
+    const onRefresh = useCallback(() => {
+        setRefreshing(true);
+        try {
+            loadTrackingData({ force: true, showLoader: false });
+        } catch (e) {
+            // ignore
+        } finally {
+            setTimeout(() => setRefreshing(false), 900);
+        }
+    }, [loadTrackingData]);
 
     // Refresh tracking lists (groups + solo + map) whenever the screen gains focus.
     useFocusEffect(
@@ -675,6 +1113,12 @@ const TrackingScreen = () => {
             };
         }, [loadTrackingData]),
     );
+
+    useEffect(() => {
+        if (refreshing) {
+            bottomSheetRef.current?.snapToIndex(1);
+        }
+    }, [refreshing]);
 
     const toRad = useCallback((deg: number) => (deg * Math.PI) / 180, []);
 
@@ -790,7 +1234,7 @@ const TrackingScreen = () => {
                         });
                     });
                 });
-            } catch {
+            } catch (e) {
                 // ignore
             }
         };
@@ -862,6 +1306,50 @@ const TrackingScreen = () => {
         }
     };
 
+    // Voice navigation: announce remaining distance while navigating
+    useEffect(() => {
+        if (!navigationGoal?.id) return;
+        if (!Array.isArray(userLocation)) return;
+
+        const id = setInterval(() => {
+            try {
+                if (!navigationGoal?.id) return;
+                if (!Array.isArray(userLocation)) return;
+
+                const pid = String(navigationGoal.id);
+                const live = getLatestPilgrimPosition(pid);
+                const target = (live?.coords || navigationGoal?.coords) as any;
+                if (!Array.isArray(target) || !Number.isFinite(target[0]) || !Number.isFinite(target[1])) return;
+
+                const d = haversineMeters(userLocation as any, target as any);
+                if (!Number.isFinite(d)) return;
+
+                const bucket = computeNavAnnounceBucket(Number(d));
+                const lastBucket = String(lastNavAnnounceBucketRef.current || '');
+                const now = Date.now();
+
+                // Avoid spamming: do not speak more often than every 10s
+                if (now - (lastNavAnnounceAtRef.current || 0) < 10000) return;
+                if (!bucket || bucket === 'far') return;
+                if (bucket === lastBucket) return;
+
+                const targetName = String(navigationGoal?.name || 'le pèlerin');
+                if (bucket === 'arrive') {
+                    speakNavigation(`Vous êtes arrivé chez ${targetName}.`);
+                } else {
+                    speakNavigation(`Il reste ${formatDistanceFr(Number(d))} pour arriver à ${targetName}.`);
+                }
+
+                lastNavAnnounceBucketRef.current = bucket;
+                lastNavAnnounceAtRef.current = now;
+            } catch (e) {
+                // ignore
+            }
+        }, 3000);
+
+        return () => clearInterval(id);
+    }, [navigationGoal, userLocation, getLatestPilgrimPosition, haversineMeters, computeNavAnnounceBucket, speakNavigation, formatDistanceFr]);
+
     const handleGroupSelect = (id: string | null) => {
         setSelectedGroup(id);
         setSelectedPilgrim(null);
@@ -914,7 +1402,7 @@ const TrackingScreen = () => {
                         photo: String(p.photo || ''),
                     },
                 } as any);
-            } catch {
+            } catch (e) {
                 // ignore
             }
         };
@@ -937,19 +1425,20 @@ const TrackingScreen = () => {
                         conversationId: convId,
                     },
                 } as any);
-            } catch {
+            } catch (e) {
                 // ignore
             }
         };
         run();
     };
 
-    const fetchRoute = async (start: number[], end: number[]) => {
+    const fetchRoute = useCallback(async (start: number[], end: number[]) => {
         const accessToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || '';
         if (!accessToken) {
             console.error('Cannot fetch route: Mapbox access token is missing.');
             return;
         }
+
         const url = `https://api.mapbox.com/directions/v5/mapbox/walking/${start[0]},${start[1]};${end[0]},${end[1]}?geometries=geojson&overview=full&access_token=${accessToken}`;
         
         try {
@@ -984,12 +1473,16 @@ const TrackingScreen = () => {
         } finally {
             // setIsLoading(false);
         }
-    };
+    }, []);
 
     const handleStopNavigation = () => {
         setNavigationGoal(null);
         setRouteData(null);
         setRouteInfo(null);
+        lastNavAnnounceBucketRef.current = '';
+        lastNavAnnounceAtRef.current = 0;
+        stopNavigationVoice();
+        stopNavCueSound();
     };
 
     const handleNavigate = (p: any) => {
@@ -1004,6 +1497,36 @@ const TrackingScreen = () => {
             setNavigationGoal(p);
             fetchRoute(userLocation, p.coords);
             bottomSheetRef.current?.snapToIndex(0);
+
+            try {
+                playNavCueSound();
+                const targetName = String(p?.name || 'le pèlerin');
+                const d = haversineMeters(userLocation as any, p.coords as any);
+                const distText = Number.isFinite(d) ? formatDistanceFr(Number(d)) : '';
+                speakNavigation(distText ? `Navigation vers ${targetName}. Il reste ${distText}.` : `Navigation vers ${targetName}.`);
+                lastNavAnnounceBucketRef.current = computeNavAnnounceBucket(Number(d));
+                lastNavAnnounceAtRef.current = Date.now();
+            } catch (e) {
+                // ignore
+            }
+
+            // If this pilgrim has an active SOS, set it to in_progress (orange) and stop vibration.
+            try {
+                const pid = String(p?.id || '').trim();
+                if (pid && sosStatusByPilgrimId[pid] === 'active') {
+                    const n = (sosAlerts || []).find((a: any) => {
+                        const apid = String(a?.data?.pilgrim?.id || a?.data?.pilgrimUserId || '').trim();
+                        return apid && apid === pid && !a?.readAt;
+                    });
+                    if (n?.id) {
+                        updateSosStatusForNotification(String(n.id), pid, 'in_progress');
+                        stopSosVibration();
+                        stopAlarmSound();
+                    }
+                }
+            } catch (e) {
+                // ignore
+            }
         }
     };
 
@@ -1020,7 +1543,33 @@ const TrackingScreen = () => {
         if (navigationGoal && userLocation) {
             fetchRoute(userLocation, navigationGoal.coords);
         }
-    }, [userLocation]);
+    }, [userLocation, navigationGoal, fetchRoute]);
+
+    // While navigating, publish guide position so pilgrim can track the guide in real time
+    useEffect(() => {
+        if (!navigationGoal || !Array.isArray(userLocation)) return;
+
+        const id = setInterval(() => {
+            try {
+                if (!Array.isArray(userLocation)) return;
+                const lng = Number(userLocation[0]);
+                const lat = Number(userLocation[1]);
+                if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+                trackingApi
+                    // backend expects activeRole=guide|agency|freelance
+                    .upsertMyGuidePosition({
+                        latitude: lat,
+                        longitude: lng,
+                        deviceTimestamp: new Date().toISOString(),
+                    } as any)
+                    .catch(() => {});
+            } catch (e) {
+                // ignore
+            }
+        }, 5000);
+
+        return () => clearInterval(id);
+    }, [navigationGoal, userLocation]);
 
     const handleMessageGroup = (gId: string) => {
         const g = groups.find(item => item.id === gId);
@@ -1061,8 +1610,55 @@ const TrackingScreen = () => {
 
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>
-            <SafeAreaView style={styles.container}>
-                <StatusBar barStyle="dark-content" />
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+
+                {initialLoading && (!Array.isArray(pilgrims) || pilgrims.length === 0) ? (
+                    <View
+                        pointerEvents="none"
+                        style={{
+                            position: 'absolute',
+                            left: 0,
+                            top: 0,
+                            right: 0,
+                            bottom: 0,
+                            zIndex: 9999,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                        }}
+                    >
+                        <ThreeDots color={colors.primary} />
+                    </View>
+                ) : null}
+
+                {refreshing ? (
+                    <View
+                        pointerEvents="none"
+                        style={{
+                            position: 'absolute',
+                            left: 0,
+                            top: 0,
+                            right: 0,
+                            bottom: 0,
+                            zIndex: 9999,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                        }}
+                    >
+                        <View
+                            style={{
+                                paddingHorizontal: 14,
+                                paddingVertical: 10,
+                                borderRadius: 16,
+                                backgroundColor: 'rgba(255,255,255,0.9)',
+                                borderWidth: 1,
+                                borderColor: 'rgba(0,0,0,0.06)',
+                            }}
+                        >
+                            <ThreeDots color="#16A34A" />
+                        </View>
+                    </View>
+                ) : null}
 
                 {/* Navigation HUD */}
                 {navigationGoal && routeInfo && (
@@ -1197,16 +1793,55 @@ const TrackingScreen = () => {
                                                     activeOpacity={0.8}
                                                     style={styles.markerWrapper}
                                                 >
+                                                    {sosActivePilgrimIdsRef.current[String(pilgrim.id)] ? (
+                                                        <RNAnimated.View
+                                                            pointerEvents="none"
+                                                            style={[
+                                                                styles.sosPulseRing,
+                                                                {
+                                                                    opacity: sosPulseAnim.interpolate({
+                                                                        inputRange: [0, 1],
+                                                                        outputRange: [0.55, 0],
+                                                                    }),
+                                                                    transform: [
+                                                                        {
+                                                                            scale: sosPulseAnim.interpolate({
+                                                                                inputRange: [0, 1],
+                                                                                outputRange: [1, 1.75],
+                                                                            }),
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            ]}
+                                                        />
+                                                    ) : null}
                                                     <View style={[
                                                         styles.markerRing,
                                                         {
-                                                            borderColor: sosActivePilgrimIdsRef.current[String(pilgrim.id)]
-                                                                ? (sosBlinkOn ? '#DC2626' : '#991B1B')
-                                                                : realHasPosition
-                                                                    ? (groups.find((g) => String(g.id) === String(selectedGroup))?.color || theme.colors.primary)
-                                                                    : '#BDBDBD'
+                                                            borderColor: (() => {
+                                                                const v = getSosVisual(String(pilgrim.id));
+                                                                if (v.isSos) return sosBlinkOn ? v.colorOn : v.colorOff;
+                                                                return realHasPosition
+                                                                    ? (groups.find((g: any) => String(g.id) === String(selectedGroup))?.color || theme.colors.primary)
+                                                                    : '#BDBDBD';
+                                                            })()
                                                         }
                                                     ]}>
+                                                        {(() => {
+                                                            const v = getSosVisual(String(pilgrim.id));
+                                                            if (!v.isSos) return null;
+                                                            return (
+                                                                <View
+                                                                    style={[
+                                                                        styles.sosBlinkOverlay,
+                                                                        {
+                                                                            backgroundColor: v.colorOn,
+                                                                            opacity: sosBlinkOn ? 0.22 : 0,
+                                                                        },
+                                                                    ]}
+                                                                />
+                                                            );
+                                                        })()}
                                                         <Image 
                                                             source={{ uri: getUserAvatarUrl(pilgrim.photo) || DEFAULT_AVATAR }}
                                                             style={styles.markerImage}
@@ -1290,16 +1925,55 @@ const TrackingScreen = () => {
                                             activeOpacity={0.8}
                                             style={styles.markerWrapper}
                                         >
+                                            {sosActivePilgrimIdsRef.current[String(pilgrim.id)] ? (
+                                                <RNAnimated.View
+                                                    pointerEvents="none"
+                                                    style={[
+                                                        styles.sosPulseRing,
+                                                        {
+                                                            opacity: sosPulseAnim.interpolate({
+                                                                inputRange: [0, 1],
+                                                                outputRange: [0.55, 0],
+                                                            }),
+                                                            transform: [
+                                                                {
+                                                                    scale: sosPulseAnim.interpolate({
+                                                                        inputRange: [0, 1],
+                                                                        outputRange: [1, 1.75],
+                                                                    }),
+                                                                },
+                                                            ],
+                                                        },
+                                                    ]}
+                                                />
+                                            ) : null}
                                             <View style={[
                                                 styles.markerRing,
                                                 {
-                                                    borderColor: sosActivePilgrimIdsRef.current[String(pilgrim.id)]
-                                                        ? (sosBlinkOn ? '#DC2626' : '#991B1B')
-                                                        : realHasPosition
+                                                    borderColor: (() => {
+                                                        const v = getSosVisual(String(pilgrim.id));
+                                                        if (v.isSos) return sosBlinkOn ? v.colorOn : v.colorOff;
+                                                        return realHasPosition
                                                             ? (group?.color || theme.colors.primary)
-                                                            : '#BDBDBD'
+                                                            : '#BDBDBD';
+                                                    })()
                                                 }
                                             ]}>
+                                                {(() => {
+                                                    const v = getSosVisual(String(pilgrim.id));
+                                                    if (!v.isSos) return null;
+                                                    return (
+                                                        <View
+                                                            style={[
+                                                                styles.sosBlinkOverlay,
+                                                                {
+                                                                    backgroundColor: v.colorOn,
+                                                                    opacity: sosBlinkOn ? 0.22 : 0,
+                                                                },
+                                                            ]}
+                                                        />
+                                                    );
+                                                })()}
                                                 <Image 
                                                     source={{ uri: getUserAvatarUrl(pilgrim.photo) || DEFAULT_AVATAR }}
                                                     style={styles.markerImage}
@@ -1313,693 +1987,721 @@ const TrackingScreen = () => {
                         )}
                     </MapboxGL.MapView>
 
-                    <TouchableOpacity
-                        style={styles.sosFab}
-                        activeOpacity={0.9}
-                        onPress={() => setSosModalVisible(true)}
-                    >
-                        <Ionicons name="alert" size={20} color="#fff" />
-                        <Text style={styles.sosFabText}>SOS</Text>
-                    </TouchableOpacity>
-                </View>
-
-                {/* Detail Popup - Swipeable Pilgrim Carousel */}
-                {selectedPilgrim && selectedPilgrimData && (
-                    <RNAnimated.View style={[styles.detailPopup, { transform: [{ translateY: slideAnim }] }]}>
-                        <View style={styles.popupContainerNoPadding}>
-                            <FlatList
-                                data={pilgrims.filter((p: any) => String(p.group) === String(selectedPilgrimData.group))}
-                                horizontal
-                                pagingEnabled
-                                showsHorizontalScrollIndicator={false}
-                                keyExtractor={(item) => item.id}
-                                initialScrollIndex={Math.max(
-                                    0,
-                                    pilgrims
-                                        .filter((p: any) => String(p.group) === String(selectedPilgrimData.group))
-                                        .findIndex((p: any) => String(p.id) === String(selectedPilgrim)),
-                                )}
-                                getItemLayout={(data, index) => ({
-                                    length: width - 40,
-                                    offset: (width - 40) * index,
-                                    index,
-                                })}
-                                snapToInterval={width - 40}
-                                decelerationRate="fast"
-                                renderItem={({ item: p }) => {
-                                    const group = groups.find((g: any) => String(g.id) === String(p.group));
-                                    return (
-                                        <View style={styles.swipeablePilgrimCard}>
-                                            <View style={styles.popupHeader}>
-                                                <View style={styles.popupUserRow}>
-                                                    <View style={[
-                                                        styles.popupImageBorder,
-                                                        { borderColor: group?.color || theme.colors.primary }
-                                                    ]}>
-                                                        <Image source={{ uri: p.photo }} style={styles.popupImage} />
-                                                    </View>
-                                                    <View style={styles.popupInfo}>
-                                                        <Text style={styles.popupName}>{p.name}</Text>
-                                                        <Text style={styles.popupGroup}>{group?.name}</Text>
-                                                    </View>
-                                                </View>
-                                                <TouchableOpacity
-                                                    style={styles.closePopup}
-                                                    onPress={() => {
-                                                        setSelectedPilgrim(null);
-                                                        bottomSheetRef.current?.snapToIndex(1);
-                                                    }}
-                                                >
-                                                    <Ionicons name="close-circle" size={28} color={theme.colors.muted} />
-                                                </TouchableOpacity>
-                                            </View>
-
-                                            <View style={styles.popupStats}>
-                                                <View style={styles.statItem}>
-                                                    <Ionicons name="location-outline" size={18} color={theme.colors.primary} />
-                                                    <Text style={styles.statLabel}>{p.hasPosition ? 'Position disponible' : 'Position non partagée'}</Text>
-                                                </View>
-                                                <View style={styles.statItem}>
-                                                    <Ionicons name="battery-charging-outline" size={18} color="#4CAF50" />
-                                                    <Text style={styles.statLabel}>82%</Text>
-                                                </View>
-                                            </View>
-
-                                            <View style={styles.popupActions}>
-                                                <TouchableOpacity
-                                                    style={[styles.actionBtn, { backgroundColor: theme.colors.primary }]}
-                                                    onPress={() => handleMessagePilgrim(p)}
-                                                >
-                                                    <Ionicons name="chatbubble-ellipses" size={22} color="#fff" />
-                                                </TouchableOpacity>
-                                                <TouchableOpacity 
-                                                    style={[styles.actionBtn, { backgroundColor: '#4285F4' }]}
-                                                    onPress={() => handleCallPilgrim(p)}
-                                                >
-                                                    <Ionicons name="call" size={22} color="#fff" />
-                                                </TouchableOpacity>
-                                                <TouchableOpacity 
-                                                    style={[
-                                                        styles.actionBtn, 
-                                                        { backgroundColor: navigationGoal?.id === p.id ? '#FF5252' : theme.colors.secondary }
-                                                    ]}
-                                                    onPress={() => handleNavigate(p)}
-                                                >
-                                                    <Ionicons 
-                                                        name={navigationGoal?.id === p.id ? "stop-circle" : "navigate-circle"} 
-                                                        size={22} 
-                                                        color="#fff" 
-                                                    />
-                                                </TouchableOpacity>
-                                            </View>
-                                        </View>
-                                    );
-                                }}
-                            />
-                        </View>
-                    </RNAnimated.View>
-                )}
-
-                {/* Top Overlay - AppBar */}
-                <View style={styles.topBar}>
-                    {isSearching ? (
-                        <View style={styles.searchBar}>
-                            <TouchableOpacity onPress={() => setIsSearching(false)}>
-                                <Ionicons name="arrow-back" size={24} color={theme.colors.secondary} />
-                            </TouchableOpacity>
-                            <TextInput
-                                style={styles.searchInput}
-                                placeholder="Search pilgrims, groups..."
-                                value={searchQuery}
-                                onChangeText={setSearchQuery}
-                                autoFocus
-                            />
-                            {searchQuery !== '' && (
-                                <TouchableOpacity onPress={() => setSearchQuery('')}>
-                                    <Ionicons name="close-circle" size={20} color={theme.colors.muted} />
-                                </TouchableOpacity>
-                            )}
-                        </View>
-                    ) : (
-                        <View style={styles.header}>
-                            <Text style={styles.headerTitle}>Tracking</Text>
-                            <View style={styles.headerActions}>
-                                <TouchableOpacity style={styles.headerIcon} onPress={() => setIsSearching(true)}>
-                                    <Ionicons name="search-outline" size={24} color={theme.colors.secondary} />
-                                </TouchableOpacity>
-                                {userMode === 'guide' && (
-                                    <TouchableOpacity style={styles.headerIcon}>
-                                        <Ionicons name="add-circle-outline" size={24} color={theme.colors.secondary} />
-                                    </TouchableOpacity>
-                                )}
-                                <TouchableOpacity style={styles.headerIcon} onPress={startScanning}>
-                                    <MaterialCommunityIcons name="qrcode-scan" size={22} color={theme.colors.secondary} />
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-                    )}
-                </View>
-
-                {/* Bottom Sheet - Management */}
-                <BottomSheet
-                    ref={bottomSheetRef}
-                    index={1}
-                    snapPoints={snapPoints}
-                    enableContentPanningGesture={!selectedPilgrim && !navigationGoal}
-                    enableHandlePanningGesture={!selectedPilgrim && !navigationGoal}
-                    backgroundStyle={styles.bottomSheetBackground}
-                    handleIndicatorStyle={styles.handleIndicator}
-                >
-                    <BottomSheetView style={styles.bottomSheetHeader}>
-                        <Text style={styles.bottomSheetTitle}>My Umrahs</Text>
-                        <TouchableOpacity onPress={() => { setSelectedGroup(null); setSelectedPilgrim(null); setSearchQuery(''); }}>
-                            <Text style={styles.resetText}>Show All</Text>
-                        </TouchableOpacity>
-                    </BottomSheetView>
-
-                    <BottomSheetScrollView contentContainerStyle={styles.scrollContent}>
-                        {Object.entries(groupData).map(([voyage, voyagesGroups]) => (
-                            <View key={voyage} style={styles.voyageSection}>
-                                <TouchableOpacity
-                                    onPress={() => {
-                                        setSelectedGroup(null);
-                                        setSelectedPilgrim(null);
-                                        toggleVoyage(voyage);
-                                    }}
-                                    style={styles.voyageHeader}
-                                >
-                                    <View style={styles.voyageTitleRow}>
-                                        <Text style={styles.voyageTitle}>{voyage}</Text>
-                                        <Text style={styles.voyageDate}>{voyagesGroups[0].date}</Text>
-                                    </View>
-                                    <Ionicons
-                                        name={expandedVoyages[voyage] ? 'chevron-up' : 'chevron-down'}
-                                        size={20}
-                                        color={theme.colors.muted}
-                                    />
-                                </TouchableOpacity>
-
-                                {expandedVoyages[voyage] && voyagesGroups.map((group: any) => (
-                                    <View key={group.id} style={styles.groupContainer}>
-                                        <TouchableOpacity
-                                            style={[styles.groupCard, selectedGroup === group.id && styles.activeGroupCard]}
-                                            onPress={() => handleGroupSelect(group.id === selectedGroup ? null : group.id)}
-                                        >
-                                            <View style={[styles.groupColorBar, { backgroundColor: group.color }]} />
-                                            <View style={styles.groupInfo}>
-                                                <Text style={styles.groupName}>{group.name}</Text>
-                                                <Text style={styles.groupSub}>{group.pilgrimIds.length} Pilgrims</Text>
-                                            </View>
-                                            <Ionicons name="people-outline" size={20} color={group.color} />
-                                        </TouchableOpacity>
-
-                                        {selectedGroup === group.id && (group.pilgrimIds || []).map((pid: string) => {
-                                            const pilgrim = pilgrims.find((p: any) => String(p.id) === String(pid));
-                                            if (!pilgrim) return null;
-                                            return (
-                                                <TouchableOpacity
-                                                    key={pilgrim.id}
-                                                    style={[styles.pilgrimRow, selectedPilgrim === pilgrim.id && styles.activePilgrimRow]}
-                                                    onPress={() => handlePilgrimSelect(pilgrim.id === selectedPilgrim ? null : pilgrim.id)}
-                                                >
-                                                    <Image source={{ uri: pilgrim.photo }} style={styles.pilgrimPhoto} />
-                                                    <View style={styles.pilgrimInfo}>
-                                                        <Text style={styles.pilgrimName}>{pilgrim.name}</Text>
-                                                        <Text style={styles.pilgrimStatus}>{pilgrim.status}</Text>
-                                                    </View>
-                                                    <View
-                                                        style={[
-                                                            styles.statusDotSmall,
-                                                            { backgroundColor: pilgrim.status === 'Active' ? '#4CAF50' : '#FFC107' },
-                                                        ]}
-                                                    />
-                                                </TouchableOpacity>
-                                            );
-                                        })}
-                                    </View>
-                                ))}
-                            </View>
-                        ))}
-                    </BottomSheetScrollView>
-                </BottomSheet>
-            </SafeAreaView>
-
-            {/* SOS Modal */}
-            <Modal
-                visible={sosModalVisible}
-                animationType="slide"
-                transparent={true}
-                onRequestClose={() => {
-                    stopAlarmSound();
-                    setSosModalVisible(false);
-                }}
-            >
-                <View style={styles.sosModalOverlay}>
-                    <TouchableOpacity
-                        style={{ flex: 1 }}
-                        onPress={() => {
-                            stopAlarmSound();
-                            setSosModalVisible(false);
-                        }}
-                    />
-                    <View style={styles.sosSheet}>
-                        <View style={styles.sosSheetHandle} />
-                        <View style={styles.sosSheetHeader}>
-                            <Text style={styles.sosSheetTitle}>SOS Alerts</Text>
-                            <TouchableOpacity onPress={() => {
-                                stopAlarmSound();
-                                setSosModalVisible(false);
-                            }} style={styles.sosSheetClose}>
-                                <Ionicons name="close" size={22} color={theme.colors.secondary} />
-                            </TouchableOpacity>
-                        </View>
-
-                        <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
-                            {Array.isArray(sosAlerts) && sosAlerts.length ? (
-                                sosAlerts
-                                    .slice()
-                                    .sort((a: any, b: any) => {
-                                        const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
-                                        const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
-                                        return tb - ta;
-                                    })
-                                    .map((a: any) => {
-                                        const data = a?.data || {};
-                                        const pilgrimId = data?.pilgrim?.id
-                                            ? String(data.pilgrim.id)
-                                            : (data?.pilgrimUserId ? String(data.pilgrimUserId) : '');
-
-                                        const nameFromPilgrim = data?.pilgrim
-                                            ? String(`${data?.pilgrim?.firstName || ''} ${data?.pilgrim?.lastName || ''}`).trim()
-                                            : '';
-                                        const pilgrimName = String(data?.pilgrimName || nameFromPilgrim || 'Pèlerin');
-
-                                        const latRaw =
-                                            data?.latitude !== undefined
-                                                ? data.latitude
-                                                : (data?.location?.latitude !== undefined ? data.location.latitude : undefined);
-                                        const lngRaw =
-                                            data?.longitude !== undefined
-                                                ? data.longitude
-                                                : (data?.location?.longitude !== undefined ? data.location.longitude : undefined);
-                                        const lat = latRaw !== null && latRaw !== undefined ? Number(latRaw) : NaN;
-                                        const lng = lngRaw !== null && lngRaw !== undefined ? Number(lngRaw) : NaN;
-                                        const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
-                                        const resolved = Boolean(a?.readAt);
-                                        const photo = data?.photo
-                                            ? String(data.photo)
-                                            : (data?.pilgrim?.photo ? String(data.pilgrim.photo) : '');
-                                        const photoUrl = getUserAvatarUrl(photo) || photo;
-
+                    {/* Detail Popup - Swipeable Pilgrim Carousel */}
+                    {selectedPilgrim && selectedPilgrimData && (
+                        <RNAnimated.View style={[styles.detailPopup, { transform: [{ translateY: slideAnim }] }]}>
+                            <View style={[styles.popupContainerNoPadding, { backgroundColor: colors.surface }]}>
+                                <FlatList
+                                    data={pilgrims.filter((p: any) => String(p.group) === String(selectedPilgrimData.group))}
+                                    horizontal
+                                    pagingEnabled
+                                    showsHorizontalScrollIndicator={false}
+                                    keyExtractor={(item) => item.id}
+                                    initialScrollIndex={Math.max(
+                                        0,
+                                        pilgrims
+                                            .filter((p: any) => String(p.group) === String(selectedPilgrimData.group))
+                                            .findIndex((p: any) => String(p.id) === String(selectedPilgrim)),
+                                    )}
+                                    getItemLayout={(data, index) => ({
+                                        length: width - 40,
+                                        offset: (width - 40) * index,
+                                        index,
+                                    })}
+                                    snapToInterval={width - 40}
+                                    decelerationRate="fast"
+                                    renderItem={({ item: p }) => {
+                                        const group = groups.find((g: any) => String(g.id) === String(p.group));
                                         return (
-                                            <TouchableOpacity
-                                                key={String(a?.id || Math.random())}
-                                                style={styles.sosRow}
-                                                activeOpacity={0.85}
-                                                onPress={() => {
-                                                    if (!hasCoords) return;
-                                                    setSosModalVisible(false);
-
-                                                    if (pilgrimId) {
-                                                        setSelectedPilgrim(pilgrimId);
-                                                        bottomSheetRef.current?.snapToIndex(0);
-                                                    }
-                                                    try {
-                                                        cameraRef.current?.setCamera({
-                                                            centerCoordinate: [lng, lat],
-                                                            zoomLevel: 16,
-                                                            animationDuration: 900,
-                                                        } as any);
-                                                    } catch {}
-                                                }}
-                                            >
-                                                <View style={[styles.sosRowIcon, { backgroundColor: resolved ? '#E8F5E9' : '#FFECEC' }]}>
-                                                    <Ionicons
-                                                        name={resolved ? 'checkmark-circle-outline' : 'alert-circle-outline'}
-                                                        size={20}
-                                                        color={resolved ? '#16A34A' : '#FF3B30'}
-                                                    />
-                                                </View>
-
-                                                {photoUrl ? (
-                                                    <View style={styles.sosRowAvatarWrap}>
-                                                        <Image source={{ uri: photoUrl }} style={styles.sosRowAvatar} />
+                                            <View style={[styles.swipeablePilgrimCard, { backgroundColor: colors.surface }]}>
+                                                <View style={styles.popupHeader}>
+                                                    <View style={styles.popupUserRow}>
+                                                        <View style={[
+                                                            styles.popupImageBorder,
+                                                            { borderColor: group?.color || colors.primary }
+                                                        ]}>
+                                                            <Image source={{ uri: p.photo }} style={styles.popupImage} />
+                                                        </View>
+                                                        <View style={styles.popupInfo}>
+                                                            <Text style={[styles.popupName, { color: colors.text }]}>{p.name}</Text>
+                                                            <Text style={[styles.popupGroup, { color: colors.textSecondary }]}>{group?.name}</Text>
+                                                        </View>
                                                     </View>
-                                                ) : null}
-
-                                                <View style={{ flex: 1 }}>
-                                                    <Text style={styles.sosRowTitle} numberOfLines={1}>
-                                                        {pilgrimName}
-                                                    </Text>
-                                                    <Text style={styles.sosRowSub} numberOfLines={2}>
-                                                        {String(a?.title || 'Alerte SOS')}
-                                                        {hasCoords ? ` • ${lat.toFixed(5)}, ${lng.toFixed(5)}` : ''}
-                                                    </Text>
-                                                </View>
-
-                                                {!resolved ? (
                                                     <TouchableOpacity
-                                                        style={styles.sosResolveBtn}
-                                                        onPress={async () => {
-                                                            try {
-                                                                if (a?.id) {
-                                                                    await notificationsApi.markRead(String(a.id));
-                                                                    await refreshSosAlerts();
-                                                                }
-                                                            } catch {
-                                                                // ignore
-                                                            }
-                                                            stopAlarmSound();
+                                                        style={styles.closePopup}
+                                                        onPress={() => {
+                                                            setSelectedPilgrim(null);
+                                                            bottomSheetRef.current?.snapToIndex(1);
                                                         }}
                                                     >
-                                                        <Text style={styles.sosResolveBtnText}>Résoudre</Text>
+                                                        <Ionicons name="close-circle" size={28} color={colors.textSecondary} />
                                                     </TouchableOpacity>
-                                                ) : (
-                                                    <View style={[styles.sosResolveBtn, { backgroundColor: '#E8F5E9' }]}>
-                                                        <Text style={[styles.sosResolveBtnText, { color: '#16A34A' }]}>OK</Text>
+                                                </View>
+
+                                                <View style={[styles.popupStats, { borderTopColor: colors.border }]}>
+                                                    <View style={styles.statItem}>
+                                                        <Ionicons name="location-outline" size={18} color={colors.primary} />
+                                                        <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{p.hasPosition ? 'Position disponible' : 'Position non partagée'}</Text>
                                                     </View>
-                                                )}
-                                            </TouchableOpacity>
+                                                    <View style={styles.statItem}>
+                                                        <Ionicons name="battery-charging-outline" size={18} color="#4CAF50" />
+                                                        <Text style={[styles.statLabel, { color: colors.textSecondary }]}>82%</Text>
+                                                    </View>
+                                                </View>
+
+                                                <View style={styles.popupActions}>
+                                                    <TouchableOpacity
+                                                        style={[styles.actionBtn, { backgroundColor: colors.primary }]}
+                                                        onPress={() => handleMessagePilgrim(p)}
+                                                    >
+                                                        <Ionicons name="chatbubble-ellipses" size={22} color="#fff" />
+                                                    </TouchableOpacity>
+                                                    <TouchableOpacity 
+                                                        style={[styles.actionBtn, { backgroundColor: '#4285F4' }]}
+                                                        onPress={() => handleCallPilgrim(p)}
+                                                    >
+                                                        <Ionicons name="call" size={22} color="#fff" />
+                                                    </TouchableOpacity>
+                                                    <TouchableOpacity 
+                                                        style={[
+                                                            styles.actionBtn, 
+                                                            { backgroundColor: navigationGoal?.id === p.id ? '#FF5252' : colors.text }
+                                                        ]}
+                                                        onPress={() => handleNavigate(p)}
+                                                    >
+                                                        <Ionicons 
+                                                            name={navigationGoal?.id === p.id ? "stop-circle" : "navigate-circle"} 
+                                                            size={22} 
+                                                            color={navigationGoal?.id === p.id ? "#fff" : colors.background} 
+                                                        />
+                                                    </TouchableOpacity>
+                                                </View>
+                                            </View>
                                         );
-                                    })
-                            ) : (
-                                <View style={styles.sosEmptyWrap}>
-                                    <Text style={styles.sosEmptyTitle}>Aucune alerte SOS</Text>
-                                    <Text style={styles.sosEmptySub}>Les alertes SOS reçues s'afficheront ici.</Text>
+                                    }}
+                                />
+                            </View>
+                        </RNAnimated.View>
+                    )}
+
+                    {/* Top Overlay - AppBar */}
+                    <View style={styles.topBar}>
+                        {isSearching ? (
+                            <View style={[styles.searchBar, { backgroundColor: colors.surface, shadowColor: isDarkMode ? '#000' : 'rgba(0,0,0,0.1)' }]}>
+                                <TouchableOpacity onPress={() => setIsSearching(false)}>
+                                    <Ionicons name="arrow-back" size={24} color={colors.text} />
+                                </TouchableOpacity>
+                                <TextInput
+                                    style={[styles.searchInput, { color: colors.text }]}
+                                    placeholder="Search pilgrims, groups..."
+                                    placeholderTextColor={colors.textSecondary}
+                                    value={searchQuery}
+                                    onChangeText={setSearchQuery}
+                                    autoFocus
+                                />
+                                {searchQuery !== '' && (
+                                    <TouchableOpacity onPress={() => setSearchQuery('')}>
+                                        <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        ) : (
+                            <View style={[styles.header, { backgroundColor: colors.surface, shadowColor: isDarkMode ? '#000' : 'rgba(0,0,0,0.1)' }]}>
+                                <Text style={[styles.headerTitle, { color: colors.text }]}>Tracking</Text>
+                                <View style={styles.headerActions}>
+                                    <TouchableOpacity style={styles.headerIcon} onPress={() => setIsSearching(true)}>
+                                        <Ionicons name="search-outline" size={24} color={colors.text} />
+                                    </TouchableOpacity>
+                                    {userMode === 'guide' && (
+                                        <TouchableOpacity style={styles.headerIcon}>
+                                            <Ionicons name="add-circle-outline" size={24} color={colors.text} />
+                                        </TouchableOpacity>
+                                    )}
+                                    <TouchableOpacity style={styles.headerIcon} onPress={startScanning}>
+                                        <MaterialCommunityIcons name="qrcode-scan" size={22} color={colors.text} />
+                                    </TouchableOpacity>
                                 </View>
-                            )}
-                        </ScrollView>
+                            </View>
+                        )}
                     </View>
+
+                    {/* Bottom Sheet - Management */}
+                    <BottomSheet
+                        ref={bottomSheetRef}
+                        index={1}
+                        snapPoints={snapPoints}
+                        enableContentPanningGesture={!selectedPilgrim && !navigationGoal}
+                        enableHandlePanningGesture={!selectedPilgrim && !navigationGoal}
+                        backgroundStyle={[styles.bottomSheetBackground, { backgroundColor: colors.surface }]}
+                        handleIndicatorStyle={[styles.handleIndicator, { backgroundColor: isDarkMode ? '#2E3B56' : '#E0E0E0' }]}
+                    >
+                        <BottomSheetView style={styles.bottomSheetHeader}>
+                            <Text style={[styles.bottomSheetTitle, { color: colors.text }]}>My Umrahs</Text>
+                            <TouchableOpacity onPress={() => { setSelectedGroup(null); setSelectedPilgrim(null); setSearchQuery(''); }}>
+                                <Text style={[styles.resetText, { color: colors.primary }]}>Show All</Text>
+                            </TouchableOpacity>
+                        </BottomSheetView>
+
+                        <BottomSheetScrollView
+                            contentContainerStyle={styles.scrollContent}
+                            refreshControl={
+                                <RefreshControl
+                                    refreshing={refreshing}
+                                    onRefresh={onRefresh}
+                                    tintColor="transparent"
+                                    colors={['transparent']}
+                                    progressBackgroundColor="transparent"
+                                />
+                            }
+                        >
+                            {Object.entries(groupData).map(([voyage, voyagesGroups]) => (
+                                <View key={voyage} style={styles.voyageSection}>
+                                    <TouchableOpacity
+                                        onPress={() => {
+                                            setSelectedGroup(null);
+                                            setSelectedPilgrim(null);
+                                            toggleVoyage(voyage);
+                                        }}
+                                        style={[styles.voyageHeader, { backgroundColor: isDarkMode ? '#121824' : '#F8F9FA' }]}
+                                    >
+                                        <View style={styles.voyageTitleRow}>
+                                            <Text style={[styles.voyageTitle, { color: colors.text }]}>{voyage}</Text>
+                                            <Text style={[styles.voyageDate, { color: colors.textSecondary }]}>{voyagesGroups[0].date}</Text>
+                                        </View>
+                                        <Ionicons
+                                            name={expandedVoyages[voyage] ? 'chevron-up' : 'chevron-down'}
+                                            size={20}
+                                            color={colors.textSecondary}
+                                        />
+                                    </TouchableOpacity>
+
+                                    {expandedVoyages[voyage] && voyagesGroups.map((group: any) => (
+                                        <View key={group.id} style={styles.groupContainer}>
+                                            <TouchableOpacity
+                                                style={[styles.groupCard, { backgroundColor: colors.surface, borderColor: colors.border }, selectedGroup === group.id && [styles.activeGroupCard, { borderColor: colors.primary, backgroundColor: isDarkMode ? 'rgba(58, 125, 68, 0.12)' : '#F0F7F2' }]]}
+                                                onPress={() => handleGroupSelect(group.id === selectedGroup ? null : group.id)}
+                                            >
+                                                <View style={[styles.groupColorBar, { backgroundColor: group.color }]} />
+                                                <View style={styles.groupInfo}>
+                                                    <Text style={[styles.groupName, { color: colors.text }]}>{group.name}</Text>
+                                                    <Text style={[styles.groupSub, { color: colors.textSecondary }]}>{group.pilgrimIds.length} Pilgrims</Text>
+                                                </View>
+                                                <Ionicons name="people-outline" size={20} color={group.color} />
+                                            </TouchableOpacity>
+
+                                            {selectedGroup === group.id && (group.pilgrimIds || []).map((pid: string) => {
+                                                const pilgrim = pilgrims.find((p: any) => String(p.id) === String(pid));
+                                                if (!pilgrim) return null;
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={pilgrim.id}
+                                                        style={[styles.pilgrimRow, { backgroundColor: colors.surface }, selectedPilgrim === pilgrim.id && [styles.activePilgrimRow, { backgroundColor: isDarkMode ? '#121824' : '#F8F9FA' }]]}
+                                                        onPress={() => handlePilgrimSelect(pilgrim.id === selectedPilgrim ? null : pilgrim.id)}
+                                                    >
+                                                        <Image source={{ uri: pilgrim.photo }} style={styles.pilgrimPhoto} />
+                                                        <View style={styles.pilgrimInfo}>
+                                                            <Text style={[styles.pilgrimName, { color: colors.text }]}>{pilgrim.name}</Text>
+                                                            <Text style={[styles.pilgrimStatus, { color: colors.textSecondary }]}>{pilgrim.status}</Text>
+                                                        </View>
+                                                        <View
+                                                            style={[
+                                                                styles.statusDotSmall,
+                                                                { backgroundColor: pilgrim.status === 'Active' ? '#4CAF50' : '#FFC107' },
+                                                            ]}
+                                                        />
+                                                    </TouchableOpacity>
+                                                );
+                                            })}
+                                        </View>
+                                    ))}
+                                </View>
+                            ))}
+                        </BottomSheetScrollView>
+                    </BottomSheet>
                 </View>
-            </Modal>
-        </GestureHandlerRootView>
-    );
-};
+                </SafeAreaView>
 
-export default TrackingScreen;
+                {/* SOS Modal */}
+                <Modal
+                    visible={sosModalVisible}
+                    animationType="slide"
+                    transparent={true}
+                    onRequestClose={() => {
+                        stopAlarmSound();
+                        setSosModalVisible(false);
+                    }}
+                >
+                    <View style={[styles.sosModalOverlay, { backgroundColor: isDarkMode ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.45)' }]}>
+                        <TouchableOpacity
+                            style={{ flex: 1 }}
+                            onPress={() => {
+                                stopAlarmSound();
+                                setSosModalVisible(false);
+                            }}
+                        />
+                        <View style={[styles.sosSheet, { backgroundColor: colors.surface }]}>
+                            <View style={[styles.sosSheetHandle, { backgroundColor: isDarkMode ? '#2E3B56' : '#E0E0E0' }]} />
+                            <View style={styles.sosSheetHeader}>
+                                <Text style={[styles.sosSheetTitle, { color: colors.text }]}>SOS Alerts</Text>
+                                <TouchableOpacity onPress={() => {
+                                    stopAlarmSound();
+                                    setSosModalVisible(false);
+                                }} style={styles.sosSheetClose}>
+                                    <Ionicons name="close" size={22} color={colors.text} />
+                                </TouchableOpacity>
+                            </View>
 
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#fff',
-    },
-    camera: {
-        flex: 1,
-    },
-    cameraOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    closeCameraBtn: {
-        position: 'absolute',
-        top: 50,
-        right: 20,
-        padding: 10,
-        zIndex: 10,
-    },
-    scanFrame: {
-        width: 250,
-        height: 250,
-        borderWidth: 2,
-        borderColor: '#fff',
-        borderRadius: 20,
-        backgroundColor: 'transparent',
-    },
-    scanText: {
-        color: '#fff',
-        marginTop: 20,
-        fontSize: 16,
-        fontWeight: '500',
-    },
-    mapContainer: {
-        flex: 1,
-    },
-    map: {
-        flex: 1,
-    },
-    topBar: {
-        position: 'absolute',
-        top: Platform.OS === 'ios' ? 60 : 45,
-        left: 20,
-        right: 20,
-        zIndex: 10,
-    },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: 16,
-        height: 52,
-        backgroundColor: '#fff',
-        borderRadius: 26,
-        elevation: 10,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 10,
-    },
-    headerTitle: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: theme.colors.secondary,
-        flex: 1,
-        marginLeft: 10,
-    },
-    headerCloseIcon: {
-        padding: 4,
-    },
-    headerActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    headerIcon: {
-        marginLeft: 15,
-    },
-    backButtonPopup: {
-        marginRight: 10,
-        padding: 4,
-    },
-    searchBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 15,
-        height: 52,
-        backgroundColor: '#fff',
-        borderRadius: 26,
-        elevation: 10,
-    },
-    searchInput: {
-        flex: 1,
-        marginLeft: 10,
-        fontSize: 16,
-        color: theme.colors.secondary,
-    },
-    markerWrapper: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 99,
-    },
-    markerRing: {
-        width: 52,
-        height: 52,
-        borderRadius: 26,
-        borderWidth: 2,
-        backgroundColor: '#fff',
-        justifyContent: 'center',
-        alignItems: 'center',
-        overflow: 'hidden',
-        elevation: 6,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-    },
-    markerImage: {
-        width: '100%',
-        height: '100%',
-    },
-    markerPointer: {
-        width: 0,
-        height: 0,
-        backgroundColor: 'transparent',
-        borderStyle: 'solid',
-        borderLeftWidth: 6,
-        borderRightWidth: 6,
-        borderBottomWidth: 0,
-        borderTopWidth: 8,
-        borderLeftColor: 'transparent',
-        borderRightColor: 'transparent',
-        marginTop: -2,
-    },
-    selectedMarkerRing: {
-        borderWidth: 3,
-        width: 42,
-        height: 42,
-        borderRadius: 21,
-    },
-    calloutStatus: {
-        fontSize: 11,
-        fontWeight: '600',
-        color: theme.colors.muted,
-    },
-    detailPopup: {
-        position: 'absolute',
-        bottom: 150, // Just above the bottom sheet height in index 0/1
-        left: 20,
-        right: 20,
-        zIndex: 100,
-    },
-    popupContent: {
-        backgroundColor: '#fff',
-        borderRadius: 24,
-        padding: 20,
-        elevation: 15,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.2,
-        shadowRadius: 15,
-    },
-    popupHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-    },
-    popupUserRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 15,
-    },
-    popupImageBorder: {
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        borderWidth: 3,
-        padding: 2,
-    },
-    popupImage: {
-        width: '100%',
-        height: '100%',
-        borderRadius: 28,
-    },
-    popupInfo: {
-        gap: 2,
-    },
-    popupName: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: theme.colors.secondary,
-    },
-    popupGroup: {
-        fontSize: 14,
-        color: theme.colors.muted,
-    },
-    closePopup: {
-        padding: 2,
-    },
-    popupStats: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginTop: 20,
-        paddingTop: 15,
-        borderTopWidth: 1,
-        borderTopColor: '#F1F3F5',
-    },
-    statItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-    },
-    statLabel: {
-        fontSize: 12,
-        color: theme.colors.muted,
-        fontWeight: '500',
-    },
-    popupActions: {
-        flexDirection: 'row',
-        gap: 10,
-        marginTop: 20,
-    },
-    actionBtn: {
-        width: 42,
-        height: 42,
-        borderRadius: 12,
-        justifyContent: 'center',
-        alignItems: 'center',
-        elevation: 3,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 3,
-    },
-    actionBtnText: {
-        color: '#fff',
-        fontSize: 12,
-        fontWeight: 'bold',
-    },
-    bottomSheetBackground: {
-        backgroundColor: '#fff',
-        borderTopLeftRadius: 32,
-        borderTopRightRadius: 32,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -10 },
-        shadowOpacity: 0.05,
-        shadowRadius: 10,
-        elevation: 20,
-    },
-    handleIndicator: {
-        backgroundColor: '#E0E0E0',
-        width: 40,
-    },
-    bottomSheetHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: 24,
-        paddingTop: 8,
-        paddingBottom: 16,
-    },
-    bottomSheetTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: theme.colors.secondary,
-    },
-    resetText: {
-        fontSize: 14,
-        color: theme.colors.primary,
-        fontWeight: '600',
-    },
-    scrollContent: {
-        paddingHorizontal: 20,
-        paddingBottom: 40,
-    },
-    voyageSection: {
-        marginBottom: 12,
-    },
-    voyageHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingVertical: 10,
-        paddingHorizontal: 12,
-        backgroundColor: '#F8F9FA',
-        borderRadius: 12,
-        marginBottom: 4,
-    },
-    voyageTitleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        flex: 1,
-        justifyContent: 'space-between',
-        marginRight: 10,
-    },
-    voyageTitle: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: theme.colors.secondary,
-    },
+                            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
+                                {Array.isArray(sosAlerts) && sosAlerts.length ? (
+                                    sosAlerts
+                                        .slice()
+                                        .sort((a: any, b: any) => {
+                                            const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+                                            const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+                                            return tb - ta;
+                                        })
+                                        .map((a: any) => {
+                                            const data = a?.data || {};
+                                            const pilgrimId = data?.pilgrim?.id
+                                                ? String(data.pilgrim.id)
+                                                : (data?.pilgrimUserId ? String(data.pilgrimUserId) : '');
+
+                                            const nameFromPilgrim = data?.pilgrim
+                                                ? String(`${data?.pilgrim?.firstName || ''} ${data?.pilgrim?.lastName || ''}`).trim()
+                                                : '';
+                                            const pilgrimName = String(data?.pilgrimName || nameFromPilgrim || 'Pèlerin');
+
+                                            const latRaw =
+                                                data?.latitude !== undefined
+                                                    ? data.latitude
+                                                    : (data?.location?.latitude !== undefined ? data.location.latitude : undefined);
+                                            const lngRaw =
+                                                data?.longitude !== undefined
+                                                    ? data.longitude
+                                                    : (data?.location?.longitude !== undefined ? data.location.longitude : undefined);
+                                            const lat = latRaw !== null && latRaw !== undefined ? Number(latRaw) : NaN;
+                                            const lng = lngRaw !== null && lngRaw !== undefined ? Number(lngRaw) : NaN;
+                                            const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+                                            const resolved = Boolean(a?.readAt);
+                                            const photo = data?.photo
+                                                ? String(data.photo)
+                                                : (data?.pilgrim?.photo ? String(data.pilgrim.photo) : '');
+                                            const photoUrl = getUserAvatarUrl(photo) || photo;
+
+                                            const status: 'active' | 'in_progress' | 'resolved' = (() => {
+                                                const pid = String(pilgrimId || '').trim();
+                                                if (pid && sosStatusByPilgrimId[pid]) return sosStatusByPilgrimId[pid];
+                                                const raw = String(data?.sosStatus || '').trim().toLowerCase();
+                                                if (raw === 'in_progress' || raw === 'inprogress' || raw === 'en_cours' || raw === 'encours') return 'in_progress';
+                                                if (raw === 'resolved' || resolved) return 'resolved';
+                                                return 'active';
+                                            })();
+
+                                            return (
+                                                <TouchableOpacity
+                                                    key={String(a?.id || Math.random())}
+                                                    style={[styles.sosRow, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                                                    activeOpacity={0.85}
+                                                    onPress={() => {
+                                                        if (!hasCoords) return;
+                                                        setSosModalVisible(false);
+
+                                                        if (pilgrimId) {
+                                                            setSelectedPilgrim(pilgrimId);
+                                                            bottomSheetRef.current?.snapToIndex(0);
+                                                        }
+                                                        try {
+                                                            cameraRef.current?.setCamera({
+                                                                centerCoordinate: [lng, lat],
+                                                                zoomLevel: 16,
+                                                                animationDuration: 900,
+                                                            } as any);
+                                                        } catch (e) {}
+                                                    }}
+                                                >
+                                                    {photoUrl ? (
+                                                        <View style={styles.sosRowAvatarWrap}>
+                                                            <Image source={{ uri: photoUrl }} style={styles.sosRowAvatar} />
+                                                        </View>
+                                                    ) : null}
+
+                                                    <View style={{ flex: 1 }}>
+                                                        <Text style={[styles.sosRowTitle, { color: colors.text }]} numberOfLines={1}>
+                                                            {pilgrimName}
+                                                        </Text>
+                                                        <Text style={[styles.sosRowSub, { color: colors.textSecondary }]} numberOfLines={2}>
+                                                            {String(a?.title || 'Alerte SOS')}
+                                                            {hasCoords ? ` • ${lat.toFixed(5)}, ${lng.toFixed(5)}` : ''}
+                                                        </Text>
+                                                    </View>
+
+                                                    {!resolved ? (
+                                                        <View style={styles.sosStatusPickerWrap}>
+                                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                                                <TouchableOpacity
+                                                                    style={[styles.sosResolveBtn, { backgroundColor: '#FFF7ED' }]}
+                                                                    onPress={() => {
+                                                                        if (!a?.id || !pilgrimId) return;
+                                                                        updateSosStatusForNotification(String(a.id), pilgrimId, 'in_progress');
+                                                                    }}
+                                                                >
+                                                                    <Text style={[styles.sosResolveBtnText, { color: '#F97316' }]}>En cours</Text>
+                                                                </TouchableOpacity>
+                                                                <TouchableOpacity
+                                                                    style={[styles.sosResolveBtn, { backgroundColor: '#E8F5E9' }]}
+                                                                    onPress={() => {
+                                                                        if (!a?.id || !pilgrimId) return;
+                                                                        updateSosStatusForNotification(String(a.id), pilgrimId, 'resolved');
+                                                                    }}
+                                                                >
+                                                                    <Text style={[styles.sosResolveBtnText, { color: '#16A34A' }]}>Résoudre</Text>
+                                                                </TouchableOpacity>
+                                                            </View>
+                                                        </View>
+                                                    ) : (
+                                                        <View style={[styles.sosResolveBtn, { backgroundColor: '#E8F5E9' }]}>
+                                                            <Text style={[styles.sosResolveBtnText, { color: '#16A34A' }]}>OK</Text>
+                                                        </View>
+                                                    )}
+                                                </TouchableOpacity>
+                                            );
+                                        })
+                                ) : (
+                                    <View style={styles.sosEmptyWrap}>
+                                        <Text style={[styles.sosEmptyTitle, { color: colors.text }]}>Aucune alerte SOS</Text>
+                                        <Text style={[styles.sosEmptySub, { color: colors.textSecondary }]}>Les alertes SOS reçues s'afficheront ici.</Text>
+                                    </View>
+                                )}
+                            </ScrollView>
+                        </View>
+                    </View>
+                </Modal>
+            </GestureHandlerRootView>
+        );
+    };
+
+    export default TrackingScreen;
+
+    const styles = StyleSheet.create({
+        container: {
+            flex: 1,
+            backgroundColor: '#fff',
+        },
+        camera: {
+            flex: 1,
+        },
+        cameraOverlay: {
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            justifyContent: 'center',
+            alignItems: 'center',
+        },
+        closeCameraBtn: {
+            position: 'absolute',
+            top: 50,
+            right: 20,
+            padding: 10,
+            zIndex: 10,
+        },
+        scanFrame: {
+            width: 250,
+            height: 250,
+            borderWidth: 2,
+            borderColor: '#fff',
+            borderRadius: 20,
+            backgroundColor: 'transparent',
+        },
+        scanText: {
+            color: '#fff',
+            marginTop: 20,
+            fontSize: 16,
+            fontWeight: '500',
+        },
+        mapContainer: {
+            flex: 1,
+        },
+        map: {
+            flex: 1,
+        },
+        topBar: {
+            position: 'absolute',
+            top: Platform.OS === 'ios' ? 60 : 45,
+            left: 20,
+            right: 20,
+            zIndex: 10,
+        },
+        header: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            paddingHorizontal: 16,
+            height: 52,
+            backgroundColor: '#fff',
+            borderRadius: 26,
+            elevation: 10,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.1,
+            shadowRadius: 10,
+        },
+        headerTitle: {
+            fontSize: 16,
+            fontWeight: 'bold',
+            color: theme.colors.secondary,
+            flex: 1,
+            marginLeft: 10,
+        },
+        headerCloseIcon: {
+            padding: 4,
+        },
+        headerActions: {
+            flexDirection: 'row',
+            alignItems: 'center',
+        },
+        headerIcon: {
+            marginLeft: 15,
+        },
+        backButtonPopup: {
+            marginRight: 10,
+            padding: 4,
+        },
+        searchBar: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: 15,
+            height: 52,
+            backgroundColor: '#fff',
+            borderRadius: 26,
+            elevation: 10,
+        },
+        searchInput: {
+            flex: 1,
+            marginLeft: 10,
+            fontSize: 16,
+            color: theme.colors.secondary,
+        },
+        markerWrapper: {
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99,
+        },
+        markerRing: {
+            width: 52,
+            height: 52,
+            borderRadius: 26,
+            borderWidth: 2,
+            backgroundColor: '#fff',
+            justifyContent: 'center',
+            alignItems: 'center',
+            overflow: 'hidden',
+            elevation: 6,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 3 },
+            shadowOpacity: 0.25,
+            shadowRadius: 4,
+        },
+        markerImage: {
+            width: '100%',
+            height: '100%',
+        },
+        markerPointer: {
+            width: 0,
+            height: 0,
+            backgroundColor: 'transparent',
+            borderStyle: 'solid',
+            borderLeftWidth: 6,
+            borderRightWidth: 6,
+            borderBottomWidth: 0,
+            borderTopWidth: 8,
+            borderLeftColor: 'transparent',
+            borderRightColor: 'transparent',
+            marginTop: -2,
+        },
+        selectedMarkerRing: {
+            borderWidth: 3,
+            width: 42,
+            height: 42,
+            borderRadius: 21,
+        },
+        calloutStatus: {
+            fontSize: 11,
+            fontWeight: '600',
+            color: theme.colors.muted,
+        },
+        detailPopup: {
+            position: 'absolute',
+            bottom: 150, // Just above the bottom sheet height in index 0/1
+            left: 20,
+            right: 20,
+            zIndex: 100,
+        },
+        popupContent: {
+            backgroundColor: '#fff',
+            borderRadius: 24,
+            padding: 20,
+            elevation: 15,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 8 },
+            shadowOpacity: 0.2,
+            shadowRadius: 15,
+        },
+        popupHeader: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+        },
+        popupUserRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 15,
+        },
+        popupImageBorder: {
+            width: 60,
+            height: 60,
+            borderRadius: 30,
+            borderWidth: 3,
+            padding: 2,
+        },
+        popupImage: {
+            width: '100%',
+            height: '100%',
+            borderRadius: 28,
+        },
+        popupInfo: {
+            gap: 2,
+        },
+        popupName: {
+            fontSize: 18,
+            fontWeight: 'bold',
+            color: theme.colors.secondary,
+        },
+        popupGroup: {
+            fontSize: 14,
+            color: theme.colors.muted,
+        },
+        closePopup: {
+            padding: 2,
+        },
+        popupStats: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            marginTop: 20,
+            paddingTop: 15,
+            borderTopWidth: 1,
+            borderTopColor: '#F1F3F5',
+        },
+        statItem: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 5,
+        },
+        statLabel: {
+            fontSize: 12,
+            color: theme.colors.muted,
+            fontWeight: '500',
+        },
+        popupActions: {
+            flexDirection: 'row',
+            gap: 10,
+            marginTop: 20,
+        },
+        actionBtn: {
+            width: 42,
+            height: 42,
+            borderRadius: 12,
+            justifyContent: 'center',
+            alignItems: 'center',
+            elevation: 3,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.2,
+            shadowRadius: 3,
+        },
+        actionBtnText: {
+            color: '#fff',
+            fontSize: 12,
+            fontWeight: 'bold',
+        },
+        bottomSheetBackground: {
+            backgroundColor: '#fff',
+            borderTopLeftRadius: 32,
+            borderTopRightRadius: 32,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: -10 },
+            shadowOpacity: 0.05,
+            shadowRadius: 10,
+            elevation: 20,
+        },
+        handleIndicator: {
+            backgroundColor: '#E0E0E0',
+            width: 40,
+        },
+        bottomSheetHeader: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            paddingHorizontal: 24,
+            paddingTop: 8,
+            paddingBottom: 16,
+        },
+        bottomSheetTitle: {
+            fontSize: 20,
+            fontWeight: 'bold',
+            color: theme.colors.secondary,
+        },
+        resetText: {
+            fontSize: 14,
+            color: theme.colors.primary,
+            fontWeight: '600',
+        },
+        scrollContent: {
+            paddingHorizontal: 20,
+            paddingBottom: 40,
+        },
+        voyageSection: {
+            marginBottom: 12,
+        },
+        voyageHeader: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            paddingVertical: 10,
+            paddingHorizontal: 12,
+            backgroundColor: '#F8F9FA',
+            borderRadius: 12,
+            marginBottom: 4,
+        },
+        voyageTitleRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            flex: 1,
+            justifyContent: 'space-between',
+            marginRight: 10,
+        },
+        voyageTitle: {
+            fontSize: 16,
+            fontWeight: 'bold',
+            color: theme.colors.secondary,
+        },
+        sosPulseRing: {
+            position: 'absolute',
+            width: 56,
+            height: 56,
+            borderRadius: 28,
+            borderWidth: 3,
+            borderColor: '#DC2626',
+            backgroundColor: 'transparent',
+        },
+        sosBlinkOverlay: {
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: '#DC2626',
+            pointerEvents: 'none',
+        },
     voyageDate: {
         fontSize: 13,
         color: theme.colors.muted,
@@ -2282,8 +2984,19 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '800',
     },
+    sosStatusPickerWrap: {
+        minWidth: 140,
+        borderRadius: 10,
+        backgroundColor: 'transparent',
+        justifyContent: 'center',
+        marginLeft: 10,
+    },
+    sosStatusPicker: {
+        height: 36,
+        width: 160,
+    },
     sosEmptyWrap: {
-        paddingVertical: 24,
+        paddingVertical: 40,
         alignItems: 'center',
     },
     sosEmptyTitle: {

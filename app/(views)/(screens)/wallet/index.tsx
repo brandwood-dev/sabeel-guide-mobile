@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/theme';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { walletApi } from '@/services/api';
 import { paymentsApi } from '@/services/api';
 import { authService } from '@/services/authService';
@@ -48,8 +49,9 @@ type Tx = {
 
 const formatMoney = (amountCents?: number, currency?: string) => {
   const amount = typeof amountCents === 'number' ? amountCents : 0;
-  const cur = String(currency || 'MAD').toUpperCase();
-  return `${(amount / 100).toFixed(2)} ${cur}`;
+  const cur = String(currency || 'TND').toUpperCase();
+  const divisor = cur === 'TND' ? 1000 : 100;
+  return `${(amount / divisor).toFixed(2)} ${cur}`;
 };
 
 const formatDate = (value?: string) => {
@@ -103,6 +105,8 @@ const buildIdempotencyKey = () => {
 };
 
 export default function GuideWalletScreen() {
+  const colors = useThemeColors() as any;
+  const isDarkMode = useIsDarkMode();
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -217,7 +221,7 @@ export default function GuideWalletScreen() {
       setAlertConfig({
         visible: true,
         title: 'Solde insuffisant',
-        message: 'Votre solde disponible est de 0 MAD.',
+        message: 'Votre solde disponible est de 0 TND.',
         type: 'warning',
         actionLabel: "D'accord",
         onAction: undefined,
@@ -229,8 +233,8 @@ export default function GuideWalletScreen() {
   };
 
   const confirmWithdraw = async () => {
-    const amountMAD = Number(String(withdrawAmount || '').replace(',', '.'));
-    if (!Number.isFinite(amountMAD) || amountMAD <= 0) {
+    const amountTND = Number(String(withdrawAmount || '').replace(',', '.'));
+    if (!Number.isFinite(amountTND) || amountTND <= 0) {
       setAlertConfig({
         visible: true,
         title: 'Montant invalide',
@@ -242,7 +246,7 @@ export default function GuideWalletScreen() {
       return;
     }
 
-    const amountCents = Math.floor(amountMAD * 100);
+    const amountCents = Math.floor(amountTND * 100);
     if (!Number.isFinite(amountCents) || amountCents <= 0) {
       setAlertConfig({
         visible: true,
@@ -309,32 +313,45 @@ export default function GuideWalletScreen() {
     });
   };
 
+  const getWithdrawalStatusColor = (status: string) => {
+    const s = String(status || '').toUpperCase();
+    switch (s) {
+      case 'SCHEDULED': return colors.textSecondary;
+      case 'PROCESSING': return '#FFA500';
+      case 'PAID': return colors.primary;
+      case 'FAILED':
+      case 'REJECTED': return '#EF4444';
+      default: return colors.textSecondary;
+    }
+  };
+
   const renderTx = ({ item }: { item: Tx }) => {
     const incoming = isIncoming(item, wallet?.id);
     const amountText = formatMoney(item.amount, item.currency);
     const sign = incoming ? '+' : '-';
+    const txColor = incoming ? colors.primary : (isDarkMode ? '#FF9800' : theme.colors.secondary);
 
     return (
       <TouchableOpacity
-        style={ss.txItem}
+        style={[ss.txItem, { backgroundColor: colors.surface }]}
         activeOpacity={0.8}
         onPress={() => {
           setSelectedTx(item);
           setDetailsVisible(true);
         }}
       >
-        <View style={[ss.txIconWrap, { backgroundColor: incoming ? 'rgba(44,95,45,0.10)' : 'rgba(217,171,131,0.14)' }]}>
-          <Ionicons name={incoming ? 'arrow-down' : 'arrow-up'} size={18} color={incoming ? theme.colors.primary : theme.colors.secondary} />
+        <View style={[ss.txIconWrap, { backgroundColor: incoming ? 'rgba(76, 175, 80, 0.12)' : 'rgba(255, 152, 0, 0.12)' }]}>
+          <Ionicons name={incoming ? 'arrow-down' : 'arrow-up'} size={18} color={txColor} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={ss.txTitle}>{shortTypeLabel(item.type)}</Text>
-          <Text style={ss.txSub}>{formatDate(item.createdAt)}</Text>
+          <Text style={[ss.txTitle, { color: colors.text }]}>{shortTypeLabel(item.type)}</Text>
+          <Text style={[ss.txSub, { color: colors.textSecondary }]}>{formatDate(item.createdAt)}</Text>
         </View>
         <View style={{ alignItems: 'flex-end' }}>
-          <Text style={[ss.txAmount, { color: incoming ? theme.colors.primary : theme.colors.secondary }]}>
+          <Text style={[ss.txAmount, { color: txColor }]}>
             {sign} {amountText}
           </Text>
-          <Text style={[ss.txStatus, { color: item.type?.toUpperCase().includes('WITHDRAWAL') ? withdrawalStatusColor(String(item.status)) : theme.colors.muted }]}>
+          <Text style={[ss.txStatus, { color: item.type?.toUpperCase().includes('WITHDRAWAL') ? getWithdrawalStatusColor(String(item.status)) : colors.textSecondary }]}>
             {item.type?.toUpperCase().includes('WITHDRAWAL') ? withdrawalStatusLabel(String(item.status)) : String(item.status || '').toLowerCase()}
           </Text>
         </View>
@@ -343,20 +360,20 @@ export default function GuideWalletScreen() {
   };
 
   return (
-    <SafeAreaView style={[ss.container, { paddingTop: insets.top }]}
+    <SafeAreaView style={[ss.container, { backgroundColor: colors.background, paddingTop: insets.top }]}
     >
       <View style={ss.header}>
-        <TouchableOpacity onPress={() => router.back()} style={ss.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={theme.colors.secondary} />
+        <TouchableOpacity onPress={() => router.back()} style={[ss.backBtn, { backgroundColor: colors.surface }]}>
+          <Ionicons name="arrow-back" size={22} color={colors.text} />
         </TouchableOpacity>
-        <Text style={ss.headerTitle}>Sabeel Wallet</Text>
+        <Text style={[ss.headerTitle, { color: colors.text }]}>Sabeel Wallet</Text>
         <View style={{ width: 40 }} />
       </View>
 
       {loading ? (
         <View style={ss.center}>
-          <ActivityIndicator color={theme.colors.primary} />
-          <Text style={ss.centerText}>Chargement...</Text>
+          <ActivityIndicator color={colors.primary} />
+          <Text style={[ss.centerText, { color: colors.textSecondary }]}>Chargement...</Text>
         </View>
       ) : (
         <FlatList
@@ -367,22 +384,22 @@ export default function GuideWalletScreen() {
           contentContainerStyle={{ padding: 18, paddingBottom: 28 + insets.bottom }}
           ListHeaderComponent={
             <View>
-              <View style={ss.walletCard}>
+              <View style={[ss.walletCard, { backgroundColor: colors.surface }]}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <View>
-                    <Text style={ss.walletLabel}>Solde disponible</Text>
-                    <Text style={ss.walletBalance}>{headerBalance.availableText}</Text>
-                    <Text style={ss.walletPending}>En attente: {headerBalance.pendingText}</Text>
+                    <Text style={[ss.walletLabel, { color: colors.textSecondary }]}>Solde disponible</Text>
+                    <Text style={[ss.walletBalance, { color: colors.text }]}>{headerBalance.availableText}</Text>
+                    <Text style={[ss.walletPending, { color: colors.textSecondary }]}>En attente: {headerBalance.pendingText}</Text>
                   </View>
-                  <View style={ss.statusPill}>
-                    <View style={[ss.dot, { backgroundColor: hasCard ? theme.colors.primary : theme.colors.muted }]} />
-                    <Text style={ss.statusText}>{hasCard ? 'Card Added' : 'Not Added'}</Text>
+                  <View style={[ss.statusPill, { backgroundColor: hasCard ? 'rgba(76, 175, 80, 0.15)' : (isDarkMode ? '#2E3B56' : theme.colors.primary + '10') }]}>
+                    <View style={[ss.dot, { backgroundColor: hasCard ? colors.primary : colors.textSecondary }]} />
+                    <Text style={[ss.statusText, { color: colors.text }]}>{hasCard ? 'Card Added' : 'Not Added'}</Text>
                   </View>
                 </View>
 
                 <View style={ss.walletActionsRow}>
                   <TouchableOpacity
-                    style={[ss.actionBtn, { backgroundColor: theme.colors.primary }]}
+                    style={[ss.actionBtn, { backgroundColor: colors.primary }]}
                     onPress={async () => {
                       if (hasCard) {
                         setCardDetailsVisible(true);
@@ -404,7 +421,7 @@ export default function GuideWalletScreen() {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[ss.actionBtn, { backgroundColor: theme.colors.secondary }]}
+                    style={[ss.actionBtn, { backgroundColor: isDarkMode ? '#2E3B56' : theme.colors.secondary }]}
                     onPress={openWithdraw}
                     activeOpacity={0.85}
                   >
@@ -415,20 +432,20 @@ export default function GuideWalletScreen() {
               </View>
 
               <View style={ss.sectionHeader}>
-                <Text style={ss.sectionTitle}>Transactions</Text>
+                <Text style={[ss.sectionTitle, { color: colors.text }]}>Transactions</Text>
                 <TouchableOpacity
                   onPress={() => router.push('/(views)/(screens)/wallet/history' as any)}
                   activeOpacity={0.8}
                 >
-                  <Text style={ss.sectionAction}>See All</Text>
+                  <Text style={[ss.sectionAction, { color: colors.primary }]}>See All</Text>
                 </TouchableOpacity>
               </View>
 
               {txPreview.length === 0 ? (
-                <View style={ss.emptyCard}>
-                  <Ionicons name="receipt-outline" size={34} color={theme.colors.muted} />
-                  <Text style={ss.emptyTitle}>Aucune transaction</Text>
-                  <Text style={ss.emptySub}>Vos revenus, retraits et mouvements apparaîtront ici.</Text>
+                <View style={[ss.emptyCard, { backgroundColor: colors.surface }]}>
+                  <Ionicons name="receipt-outline" size={34} color={colors.textSecondary} />
+                  <Text style={[ss.emptyTitle, { color: colors.text }]}>Aucune transaction</Text>
+                  <Text style={[ss.emptySub, { color: colors.textSecondary }]}>Vos revenus, retraits et mouvements apparaîtront ici.</Text>
                 </View>
               ) : null}
             </View>
@@ -452,20 +469,20 @@ export default function GuideWalletScreen() {
         onRequestClose={() => setCardDetailsVisible(false)}
       >
         <TouchableOpacity style={ss.sheetOverlay} activeOpacity={1} onPress={() => setCardDetailsVisible(false)}>
-          <TouchableOpacity activeOpacity={1} style={[ss.sheet, { paddingBottom: insets.bottom + 20 }]}
+          <TouchableOpacity activeOpacity={1} style={[ss.sheet, { backgroundColor: colors.surface, paddingBottom: insets.bottom + 20 }]}
             onPress={() => {
             }}
           >
-            <View style={ss.sheetHandle} />
+            <View style={[ss.sheetHandle, { backgroundColor: isDarkMode ? '#2E3B56' : '#E5E7EB' }]} />
             <TouchableOpacity style={ss.sheetClose} onPress={() => setCardDetailsVisible(false)}>
-              <Ionicons name="close" size={22} color={theme.colors.muted} />
+              <Ionicons name="close" size={22} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <Text style={ss.sheetTitle}>Card</Text>
-            <Text style={ss.sheetSub}>{cardLast4 ? `•••• ${cardLast4}` : '•••• ----'}</Text>
+            <Text style={[ss.sheetTitle, { color: colors.text }]}>Card</Text>
+            <Text style={[ss.sheetSub, { color: colors.textSecondary }]}>{cardLast4 ? `•••• ${cardLast4}` : '•••• ----'}</Text>
 
             <TouchableOpacity
-              style={[ss.primaryCta, { marginTop: 6 }]}
+              style={[ss.primaryCta, { backgroundColor: colors.primary, marginTop: 6 }]}
               onPress={async () => {
                 setCardDetailsVisible(false);
                 try {
@@ -493,30 +510,30 @@ export default function GuideWalletScreen() {
         <TouchableOpacity style={ss.sheetOverlay} activeOpacity={1} onPress={() => setWithdrawSheetVisible(false)}>
           <TouchableOpacity
             activeOpacity={1}
-            style={[ss.sheet, { paddingBottom: insets.bottom + 20 }]}
+            style={[ss.sheet, { backgroundColor: colors.surface, paddingBottom: insets.bottom + 20 }]}
           >
-            <View style={ss.sheetHandle} />
+            <View style={[ss.sheetHandle, { backgroundColor: isDarkMode ? '#2E3B56' : '#E5E7EB' }]} />
             <TouchableOpacity style={ss.sheetClose} onPress={() => setWithdrawSheetVisible(false)}>
-              <Ionicons name="close" size={22} color={theme.colors.muted} />
+              <Ionicons name="close" size={22} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <Text style={ss.sheetTitle}>Withdraw</Text>
-            <Text style={ss.sheetSub}>Entrez le montant à retirer (MAD). Traitement sous 48h max.</Text>
+            <Text style={[ss.sheetTitle, { color: colors.text }]}>Withdraw</Text>
+            <Text style={[ss.sheetSub, { color: colors.textSecondary }]}>Entrez le montant à retirer (TND). Traitement sous 48h max.</Text>
 
-            <View style={ss.inputWrap}>
-              <Text style={ss.inputPrefix}>MAD</Text>
+            <View style={[ss.inputWrap, { borderColor: colors.border }]}>
+              <Text style={[ss.inputPrefix, { color: colors.text }]}>TND</Text>
               <TextInput
                 value={withdrawAmount}
                 onChangeText={setWithdrawAmount}
                 placeholder="0.00"
-                placeholderTextColor={theme.colors.muted}
+                placeholderTextColor={colors.textSecondary}
                 keyboardType="numeric"
-                style={ss.amountInput}
+                style={[ss.amountInput, { color: colors.text }]}
               />
             </View>
 
             <TouchableOpacity
-              style={[ss.primaryCta, { opacity: withdrawLoading ? 0.7 : 1 }]}
+              style={[ss.primaryCta, { backgroundColor: colors.primary, opacity: withdrawLoading ? 0.7 : 1 }]}
               onPress={confirmWithdraw}
               disabled={withdrawLoading}
             >

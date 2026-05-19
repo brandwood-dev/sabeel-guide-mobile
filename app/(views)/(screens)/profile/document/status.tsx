@@ -3,13 +3,13 @@ import { ActivityIndicator, StyleSheet, Text, View, TouchableOpacity, ScrollView
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useThemeColors } from '@/hooks/useThemeColors';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { freelanceComplianceApi } from '@/services/api';
 
 export default function DocumentStatusPage() {
     const router = useRouter();
     const colors = useThemeColors() as any;
-    const isDarkMode = false;
+    const isDarkMode = useIsDarkMode();
 
     const [loading, setLoading] = useState(false);
     const [compliance, setCompliance] = useState<any>(null);

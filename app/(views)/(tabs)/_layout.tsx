@@ -4,9 +4,12 @@ import CustomTabBar from '@/components/navigation/CustomTabBar';
 import { useUser } from '@/context/UserContext';
 
 export default function TabLayout() {
+    const { userMode, user } = useUser();
+    const tabsKey = `tabs_${String(userMode)}_${String((user as any)?.activeRole || '')}`;
     return (
 
         <Tabs
+            key={tabsKey}
             tabBar={(props) => <CustomTabBar {...props} />}
             screenOptions={{
                 headerShown: false,

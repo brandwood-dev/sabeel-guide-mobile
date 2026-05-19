@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { useThemeColors } from '@/hooks/useThemeColors';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { CustomAlert } from '@/components/ui/CustomAlert';
 import { freelanceComplianceApi } from '@/services/api';
 
@@ -24,7 +24,7 @@ interface ScanResult {
 export default function CINScanPage() {
     const router = useRouter();
     const colors = useThemeColors() as any;
-    const isDarkMode = false; // Mock
+    const isDarkMode = useIsDarkMode();
 
     const PAGE_BG = isDarkMode ? '#111111' : '#F4F5F7';
     const CARD_BG = isDarkMode ? '#1C1C1E' : '#FFFFFF';

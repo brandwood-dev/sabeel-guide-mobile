@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { theme } from '@/theme';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { messagingApi, reservationApi } from '@/services/api';
 import { createMessagingSocket } from '@/services/messagingSocket';
@@ -25,6 +26,7 @@ type ChatMessage = {
     id: string;
     text: string;
     timestamp: string;
+    sortTs: number;
     isSent: boolean;
     type: 'text' | 'reservation_request' | 'reservation_status' | 'system';
     reservation?: any | null;
@@ -47,19 +49,38 @@ const formatTime = (value?: string | Date) => {
     return new Date(value).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 };
 
+const buildStableMessageId = (message: any) => {
+    const rawCreatedAt = message?.createdAt ? String(message.createdAt) : '';
+    const rawSender = message?.senderUserId ? String(message.senderUserId) : (message?.senderRole ? String(message.senderRole) : '');
+    const rawContent = message?.content ? String(message.content) : '';
+    const rawType = message?.messageType ? String(message.messageType) : '';
+    return `msg:${rawCreatedAt}|${rawSender}|${rawType}|${rawContent}`;
+};
+
+const getMessageSortTs = (message: any) => {
+    const raw = message?.createdAt || message?.sentAt || message?.updatedAt || null;
+    const ms = raw ? Date.parse(String(raw)) : NaN;
+    return Number.isFinite(ms) ? ms : 0;
+};
+
 const mapBackendMessage = (message: any, currentUserId?: string): ChatMessage => {
-    const id = message?.id ? String(message.id) : `msg-${Date.now()}-${Math.random()}`;
+    const id = message?.id ? String(message.id) : buildStableMessageId(message);
     return {
         id,
         text: String(message?.content || ''),
         timestamp: formatTime(message?.createdAt),
-        isSent: Boolean(currentUserId) ? message?.senderUserId === currentUserId : message?.senderRole === 'guide',
+        sortTs: getMessageSortTs(message),
+        isSent: Boolean(currentUserId)
+            ? String(message?.senderUserId || '') === String(currentUserId)
+            : message?.senderRole === 'guide',
         type: message?.messageType || 'text',
         reservation: message?.metadata?.reservation || null,
     };
 };
 
 const DiscussionScreen = () => {
+    const colors = useThemeColors() as any;
+    const isDarkMode = useIsDarkMode();
     const router = useRouter();
     const params = useLocalSearchParams();
     const { conversationId, name, photo } = params;
@@ -100,7 +121,11 @@ const DiscussionScreen = () => {
                 const conv = res.data?.conversation || null;
                 const msgs = Array.isArray(res.data?.messages) ? res.data.messages : [];
                 setConversation(conv);
-                setMessages(dedupeMessagesById(msgs.map((m: any) => mapBackendMessage(m))));
+                const meId = (user as any)?.id ? String((user as any).id) : '';
+                const mapped = msgs
+                    .map((m: any) => mapBackendMessage(m, meId))
+                    .sort((a: ChatMessage, b: ChatMessage) => (Number(a?.sortTs) || 0) - (Number(b?.sortTs) || 0));
+                setMessages(dedupeMessagesById(mapped));
             } catch (e: any) {
                 console.warn('[GuideDiscussion] sync failed', e?.message);
             } finally {
@@ -115,11 +140,14 @@ const DiscussionScreen = () => {
 
                 socketRef.on('message_created', (payload: any) => {
                     if (payload?.conversation?.id !== conversationIdValue || !payload?.message) return;
-                    const nextMessage = mapBackendMessage(payload.message);
+                    const meId = (user as any)?.id ? String((user as any).id) : '';
+                    const nextMessage = mapBackendMessage(payload.message, meId);
                     setConversation(payload.conversation || null);
                     setMessages((prev) => {
                         if (prev.some((m) => m.id === nextMessage.id)) return prev;
-                        return dedupeMessagesById([...prev, nextMessage]);
+                        const merged = dedupeMessagesById([...prev, nextMessage]);
+                        merged.sort((a, b) => (Number(a?.sortTs) || 0) - (Number(b?.sortTs) || 0));
+                        return merged;
                     });
                 });
 
@@ -127,10 +155,13 @@ const DiscussionScreen = () => {
                     if (payload?.conversation?.id !== conversationIdValue) return;
                     setConversation((prev: any) => ({ ...prev, ...(payload.conversation || {}) }));
                     if (payload?.message) {
-                        const nextMessage = mapBackendMessage(payload.message);
+                        const meId = (user as any)?.id ? String((user as any).id) : '';
+                        const nextMessage = mapBackendMessage(payload.message, meId);
                         setMessages((prev) => {
                             if (prev.some((m) => m.id === nextMessage.id)) return prev;
-                            return dedupeMessagesById([...prev, nextMessage]);
+                            const merged = dedupeMessagesById([...prev, nextMessage]);
+                            merged.sort((a, b) => (Number(a?.sortTs) || 0) - (Number(b?.sortTs) || 0));
+                            return merged;
                         });
                     }
                 });
@@ -160,7 +191,7 @@ const DiscussionScreen = () => {
     }, [loading, messages?.length]);
 
     const reservationMessage = useMemo(
-        () => [...messages].reverse().find((item) => item.type === 'reservation_request' && item.reservation),
+        () => [...messages].reverse().find((item) => item.reservation),
         [messages]
     );
 
@@ -248,22 +279,22 @@ const DiscussionScreen = () => {
 
         return (
             <View style={[styles.messageContainer, styles.fullWidthMessage]}>
-                <View style={styles.reservationCard}>
+                <View style={[styles.reservationCard, { backgroundColor: colors.surface, borderColor: colors.primary }]}>
                     <View style={styles.reservationHeader}>
-                        <Ionicons name="calendar-outline" size={18} color={theme.colors.primary} />
-                        <Text style={styles.reservationTitle}>Demande de réservation</Text>
+                        <Ionicons name="calendar-outline" size={18} color={colors.primary} />
+                        <Text style={[styles.reservationTitle, { color: colors.primary }]}>Demande de réservation</Text>
                     </View>
 
                     <View style={styles.reservationRows}>
-                        <Text style={styles.reservationLine}>Client : {item.reservation.pilgrimName || 'Pèlerin'}</Text>
-                        <Text style={styles.reservationLine}>Date : {item.reservation.reservationDate || '-'}</Text>
-                        <Text style={styles.reservationLine}>Personnes : {item.reservation.pilgrimCount || 1}</Text>
-                        {item.reservation.notes ? <Text style={styles.reservationLine}>Note : {item.reservation.notes}</Text> : null}
+                        <Text style={[styles.reservationLine, { color: colors.text }]}>Client : {item.reservation.pilgrimName || 'Pèlerin'}</Text>
+                        <Text style={[styles.reservationLine, { color: colors.text }]}>Date : {item.reservation.reservationDate || '-'}</Text>
+                        <Text style={[styles.reservationLine, { color: colors.text }]}>Personnes : {item.reservation.pilgrimCount || 1}</Text>
+                        {item.reservation.notes ? <Text style={[styles.reservationLine, { color: colors.text }]}>Note : {item.reservation.notes}</Text> : null}
                     </View>
 
                     {reservationStatus === 'pending' && !isAgencyRole && (
                         <View style={styles.reservationActionsRow}>
-                            <TouchableOpacity style={[styles.reservationActionBtn, styles.acceptBtn]} onPress={handleAcceptReservation}>
+                            <TouchableOpacity style={[styles.reservationActionBtn, styles.acceptBtn, { backgroundColor: colors.primary }]} onPress={handleAcceptReservation}>
                                 <Text style={styles.reservationActionText}>Accepter</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={[styles.reservationActionBtn, styles.rejectBtn]} onPress={handleRejectReservation}>
@@ -276,15 +307,15 @@ const DiscussionScreen = () => {
                         style={[
                             styles.reservationStatus,
                             reservationStatus === 'accepted'
-                                ? styles.statusAccepted
+                                ? [styles.statusAccepted, { backgroundColor: isDarkMode ? 'rgba(22, 163, 74, 0.15)' : '#D1FAE5' }]
                                 : reservationStatus === 'rejected'
-                                ? styles.statusRejected
-                                : styles.statusPending,
+                                ? [styles.statusRejected, { backgroundColor: isDarkMode ? 'rgba(239, 68, 68, 0.15)' : '#FEE2E2' }]
+                                : [styles.statusPending, { backgroundColor: isDarkMode ? 'rgba(245, 158, 11, 0.15)' : '#FEF3C7' }],
                         ]}
                     >
-                        <Text style={styles.reservationStatusText}>{statusLabel}</Text>
+                        <Text style={[styles.reservationStatusText, { color: colors.text }]}>{statusLabel}</Text>
                     </View>
-                    <Text style={styles.reservationTimestamp}>{item.timestamp}</Text>
+                    <Text style={[styles.reservationTimestamp, { color: colors.textSecondary }]}>{item.timestamp}</Text>
                 </View>
             </View>
         );
@@ -298,9 +329,9 @@ const DiscussionScreen = () => {
         const isGuide = item.isSent;
         return (
             <View style={[styles.messageContainer, isGuide ? styles.guideMessage : styles.pilgrimMessage]}>
-                <View style={[styles.messageBubble, isGuide ? styles.guideBubble : styles.pilgrimBubble]}>
-                    <Text style={[styles.messageText, isGuide && styles.guideText]}>{item.text}</Text>
-                    <Text style={[styles.messageSubTime, isGuide && styles.guideSubTime]}>{item.timestamp}</Text>
+                <View style={[styles.messageBubble, isGuide ? [styles.guideBubble, { backgroundColor: colors.primary }] : [styles.pilgrimBubble, { backgroundColor: isDarkMode ? '#1E2638' : '#F1F3F5' }] ]}>
+                    <Text style={[styles.messageText, { color: isGuide ? '#fff' : colors.text }]}>{item.text}</Text>
+                    <Text style={[styles.messageSubTime, { color: isGuide ? 'rgba(255,255,255,0.7)' : colors.textSecondary }]}>{item.timestamp}</Text>
                 </View>
             </View>
         );
@@ -308,17 +339,17 @@ const DiscussionScreen = () => {
 
     return (
         <KeyboardAvoidingView
-            style={{ flex: 1 }}
+            style={{ flex: 1, backgroundColor: colors.background }}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
-            <SafeAreaView style={styles.container}>
-                <StatusBar barStyle="dark-content" />
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
 
                 {/* Custom Header */}
-                <View style={styles.chatHeaderBar}>
+                <View style={[styles.chatHeaderBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                        <Ionicons name="arrow-back" size={28} color={theme.colors.secondary} />
+                        <Ionicons name="arrow-back" size={28} color={colors.text} />
                     </TouchableOpacity>
                     <View style={styles.headerInfo}>
                         <Image
@@ -330,15 +361,15 @@ const DiscussionScreen = () => {
                             style={styles.headerPhoto}
                         />
                         <View>
-                            <Text style={styles.headerName} numberOfLines={1}>
+                            <Text style={[styles.headerName, { color: colors.text }]} numberOfLines={1}>
                                 {contactName}
                             </Text>
-                            <Text style={styles.headerStatus}>{conversation?.isLocked ? 'En attente' : 'Active'}</Text>
+                            <Text style={[styles.headerStatus, { color: colors.primary }]}>{conversation?.isLocked ? 'En attente' : 'Active'}</Text>
                         </View>
                     </View>
                     <View style={styles.headerActions}>
                         <TouchableOpacity onPress={handleStartCall} style={styles.headerActionIcon}>
-                            <Ionicons name="call" size={22} color={theme.colors.primary} />
+                            <Ionicons name="call" size={22} color={colors.primary} />
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -354,14 +385,15 @@ const DiscussionScreen = () => {
                 />
 
                 {/* Input Bar */}
-                <View style={styles.inputBar}>
-                    <TouchableOpacity style={styles.scrollDownButton} onPress={scrollToBottom} activeOpacity={0.8}>
-                        <Ionicons name="chevron-down" size={18} color={theme.colors.primary} />
+                <View style={[styles.inputBar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+                    <TouchableOpacity style={[styles.scrollDownButton, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={scrollToBottom} activeOpacity={0.8}>
+                        <Ionicons name="chevron-down" size={18} color={colors.primary} />
                     </TouchableOpacity>
-                    <View style={styles.inputWrapper}>
+                    <View style={[styles.inputWrapper, { backgroundColor: colors.background }]}>
                         <TextInput
-                            style={styles.textInput}
+                            style={[styles.textInput, { color: colors.text }]}
                             placeholder="Type a message..."
+                            placeholderTextColor={colors.textSecondary}
                             multiline
                             value={inputText}
                             onChangeText={setInputText}
@@ -369,7 +401,11 @@ const DiscussionScreen = () => {
                         />
                     </View>
                     <TouchableOpacity
-                        style={[styles.sendBtn, !inputText.trim() && styles.sendBtnDisabled]}
+                        style={[
+                            styles.sendBtn,
+                            { backgroundColor: colors.primary },
+                            (!inputText.trim() || !canSendMessages) && { backgroundColor: isDarkMode ? '#2E3B56' : '#CED4DA', opacity: 0.6 }
+                        ]}
                         onPress={handleSendMessage}
                         disabled={!inputText.trim() || !canSendMessages}
                     >

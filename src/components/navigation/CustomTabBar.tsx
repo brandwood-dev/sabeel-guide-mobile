@@ -4,17 +4,20 @@ import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '../../theme';
+import { useThemeColors, useIsDarkMode } from '../../hooks/useThemeColors';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUser } from '../../context/UserContext';
 import { useRouter } from 'expo-router';
 
 export default function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
+    const colors = useThemeColors() as any;
+    const isDarkMode = useIsDarkMode();
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const { isBottomNavVisible, userMode, unreadMessagesCount } = useUser();
 
-    const activeColor = userMode === 'agency' ? theme.colors.secondary : theme.colors.primary;
-    const secondaryActiveColor = userMode === 'agency' ? '#374151' : '#4A7C59';
+    const activeColor = userMode === 'agency' ? colors.text : colors.primary;
+    const secondaryActiveColor = userMode === 'agency' ? '#374151' : (isDarkMode ? '#538E5A' : '#4A7C59');
 
     // Animation for visibility
     const visibleAnim = React.useRef(new Animated.Value(1)).current;
@@ -64,7 +67,7 @@ export default function CustomTabBar({ state, descriptors, navigation }: BottomT
                 <View
                     style={[
                         styles.backgroundStrip,
-                        { height: 85 + insets.bottom }
+                        { height: 85 + insets.bottom, backgroundColor: colors.background, borderTopColor: colors.border }
                     ]}
                 />
             )}
@@ -81,7 +84,7 @@ export default function CustomTabBar({ state, descriptors, navigation }: BottomT
                     opacity: visibleAnim,
                 }
             ]}>
-                <View style={styles.tabBar}>
+                <View style={[styles.tabBar, { backgroundColor: colors.surface }]}>
                     {state.routes.map((route, index) => {
                         const { options } = descriptors[route.key];
                         const label =
@@ -149,7 +152,7 @@ export default function CustomTabBar({ state, descriptors, navigation }: BottomT
                                         style={[
                                             styles.gradientContainer,
                                             isFocused && styles.gradientContainerActive,
-                                            { shadowColor: activeColor }
+                                            { shadowColor: activeColor, borderColor: colors.surface }
                                         ]}
                                         start={{ x: 0, y: 0 }}
                                         end={{ x: 1, y: 1 }}
@@ -180,12 +183,12 @@ export default function CustomTabBar({ state, descriptors, navigation }: BottomT
                                 <Animated.View style={[
                                     styles.iconContainer,
                                     isFocused && styles.iconContainerActive,
-                                    isFocused && { backgroundColor: userMode === 'agency' ? '#F3F4F6' : '#F0F7F2' },
+                                    isFocused && { backgroundColor: userMode === 'agency' ? (isDarkMode ? 'rgba(255,255,255,0.08)' : '#F3F4F6') : (isDarkMode ? 'rgba(58, 125, 68, 0.15)' : '#F0F7F2') },
                                     route.name === 'profile' && onboardingStep === 'profile_tab' && { transform: [{ scale: pulseAnim }], borderColor: activeColor, borderWidth: 1 }
                                 ]}>
-                                    {getIcon(route.name, isFocused, isFocused ? activeColor : theme.colors.muted)}
+                                    {getIcon(route.name, isFocused, isFocused ? activeColor : colors.textSecondary)}
                                     {route.name === 'messages' && unreadMessagesCount > 0 ? (
-                                        <View style={styles.messagesBadge}>
+                                        <View style={[styles.messagesBadge, { borderColor: colors.surface, backgroundColor: colors.primary }]}>
                                             <Text style={styles.messagesBadgeText} numberOfLines={1}>
                                                 {unreadMessagesCount > 99 ? '99+' : String(unreadMessagesCount)}
                                             </Text>
@@ -195,7 +198,7 @@ export default function CustomTabBar({ state, descriptors, navigation }: BottomT
 
                                 <Text style={[
                                     styles.tabLabel,
-                                    { color: isFocused ? activeColor : theme.colors.muted }
+                                    { color: isFocused ? activeColor : colors.textSecondary }
                                 ]}>
                                     {String(label)}
                                 </Text>

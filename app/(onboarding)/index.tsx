@@ -19,6 +19,8 @@ import type { SupportedLang } from '@/store/uiSlice';
 import { theme } from '@/theme';
 import { useTrans } from '@/hooks/useTrans';
 import { Button } from '@/components/common/Button';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DevSettings, I18nManager } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
 
@@ -91,6 +93,30 @@ export default function OnboardingScreen() {
         router.replace('/signin' as any);
     };
 
+    const applyLanguage = async (next: SupportedLang) => {
+        const prevIsRTL = I18nManager.isRTL;
+        const nextIsRTL = next === 'ar';
+
+        setSelectedLang(next);
+        dispatch(setLanguage(next));
+
+        try {
+            await AsyncStorage.setItem('@sg_language', next);
+        } catch {
+            // ignore
+        }
+
+        if (prevIsRTL !== nextIsRTL) {
+            try {
+                I18nManager.allowRTL(true);
+                I18nManager.forceRTL(nextIsRTL);
+                DevSettings.reload();
+            } catch {
+                // ignore
+            }
+        }
+    };
+
     const renderItem = ({ item }: { item: typeof SLIDES[0] }) => (
         <View style={styles.slide}>
             <View style={styles.imageContainer}>
@@ -111,7 +137,7 @@ export default function OnboardingScreen() {
                     onPress={() => setShowLangSheet(true)}
                 >
                     <Ionicons name="globe-outline" size={18} color={theme.colors.muted} />
-                    <Text style={styles.langText}>EN/FR</Text>
+                    <Text style={styles.langText}>{String(selectedLang || 'fr').toUpperCase()}</Text>
                 </TouchableOpacity>
             </View>
 
@@ -189,9 +215,8 @@ export default function OnboardingScreen() {
                                     styles.langItem,
                                     selectedLang === lang.code && styles.langItemActive
                                 ]}
-                                onPress={() => {
-                                    setSelectedLang(lang.code as SupportedLang);
-                                    dispatch(setLanguage(lang.code as SupportedLang));
+                                onPress={async () => {
+                                    await applyLanguage(lang.code as SupportedLang);
                                     setShowLangSheet(false);
                                 }}
                             >

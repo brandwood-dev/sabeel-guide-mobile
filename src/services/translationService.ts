@@ -8,7 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  */
 
 const LIBRE_TRANSLATE_URL = 'https://libretranslate.de/translate';
-const CACHE_KEY_PREFIX = '@sg_translation_cache_';
+const CACHE_KEY_PREFIX = '@translation_cache_';
 
 export type SupportedLang = 'fr' | 'en' | 'ar';
 
@@ -138,6 +138,55 @@ export const uiTranslations: Record<string, Record<SupportedLang, string>> = {
     'Votre tableau de bord aujourd\'hui': { fr: 'Votre tableau de bord aujourd\'hui', en: 'Your dashboard today', ar: 'لوحة التحكم الخاصة بك اليوم' },
     'Notifications': { fr: 'Notifications', en: 'Notifications', ar: 'الإشعارات' },
     'Tout lire': { fr: 'Tout lire', en: 'Mark all read', ar: 'تحديد الكل كمقروء' },
+
+    'Tableau de bord': { fr: 'Tableau de bord', en: 'Dashboard', ar: 'لوحة التحكم' },
+    "Aperçu de l'activité": { fr: "Aperçu de l'activité", en: 'Activity overview', ar: 'نظرة عامة على النشاط' },
+
+    // Home / Common labels
+    'Pèlerin': { fr: 'Pèlerin', en: 'Pilgrim', ar: 'حاج' },
+    'Pèlerins': { fr: 'Pèlerins', en: 'Pilgrims', ar: 'الحجاج' },
+    'Pèlerins Récents': { fr: 'Pèlerins Récents', en: 'Recent Pilgrims', ar: 'الحجاج الأخيرون' },
+    'Tout voir': { fr: 'Tout voir', en: 'See all', ar: 'عرض الكل' },
+    'Mes Groupes': { fr: 'Mes Groupes', en: 'My Groups', ar: 'مجموعاتي' },
+    'Départ:': { fr: 'Départ:', en: 'Departure:', ar: 'المغادرة:' },
+    'Tous les Pèlerins': { fr: 'Tous les Pèlerins', en: 'All Pilgrims', ar: 'كل الحجاج' },
+    'Wallet': { fr: 'Portefeuille', en: 'Wallet', ar: 'المحفظة' },
+    'Groupes': { fr: 'Groupes', en: 'Groups', ar: 'المجموعات' },
+    'Agence': { fr: 'Agence', en: 'Agency', ar: 'الوكالة' },
+
+    // Wallet modal
+    'Mon Portefeuille': { fr: 'Mon Portefeuille', en: 'My Wallet', ar: 'محفظتي' },
+    'Solde Disponible': { fr: 'Solde Disponible', en: 'Available balance', ar: 'الرصيد المتاح' },
+    "Retirer l'argent": { fr: "Retirer l'argent", en: 'Withdraw money', ar: 'سحب الأموال' },
+    'Historique des transactions': { fr: 'Historique des transactions', en: 'Transaction history', ar: 'سجل المعاملات' },
+
+    // SOS
+    'SOS Alert': { fr: 'SOS Alert', en: 'SOS Alert', ar: 'تنبيه SOS' },
+    'Alerte SOS': { fr: 'Alerte SOS', en: 'SOS Alert', ar: 'تنبيه SOS' },
+    'Aucune alerte SOS': { fr: 'Aucune alerte SOS', en: 'No SOS alerts', ar: 'لا توجد تنبيهات SOS' },
+    "Les alertes SOS reçues s'afficheront ici.": {
+        fr: "Les alertes SOS reçues s'afficheront ici.",
+        en: 'Received SOS alerts will appear here.',
+        ar: 'ستظهر تنبيهات SOS المستلمة هنا.',
+    },
+    'En cours': { fr: 'En cours', en: 'In progress', ar: 'قيد المعالجة' },
+    'Résoudre': { fr: 'Résoudre', en: 'Resolve', ar: 'حل' },
+    'Résolu': { fr: 'Résolu', en: 'Resolved', ar: 'تم الحل' },
+    'En attente': { fr: 'En attente', en: 'Pending', ar: 'قيد الانتظار' },
+    'Alert': { fr: 'Alert', en: 'Alert', ar: 'تنبيه' },
+
+    // KYC
+    'Statut du compte KYC': { fr: 'Statut du compte KYC', en: 'KYC Account Status', ar: 'حالة حساب KYC' },
+    'Vérifié': { fr: 'Vérifié', en: 'Verified', ar: 'موثّق' },
+    'Votre compte est vérifié.': { fr: 'Votre compte est vérifié.', en: 'Your account is verified.', ar: 'حسابك موثّق.' },
+    'Reste': { fr: 'Reste', en: 'Remaining', ar: 'متبقّي' },
+    'À compléter:': { fr: 'À compléter:', en: 'To complete:', ar: 'للاستكمال:' },
+    'Vérification en cours.': { fr: 'Vérification en cours.', en: 'Verification in progress.', ar: 'جارٍ التحقق.' },
+
+    // Tracking
+    'Tracking en temps réel': { fr: 'Tracking en temps réel', en: 'Real-time tracking', ar: 'تتبع في الوقت الحقيقي' },
+    'Plein écran': { fr: 'Plein écran', en: 'Full screen', ar: 'ملء الشاشة' },
+    'LIVE': { fr: 'LIVE', en: 'LIVE', ar: 'مباشر' },
 
     // Common
     'Annuler': { fr: 'Annuler', en: 'Cancel', ar: 'إلغاء' },

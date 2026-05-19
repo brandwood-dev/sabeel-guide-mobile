@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { theme } from '@/theme';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { sabeelGuideGroupsApi, freelanceGroupsApi } from '@/services/api';
 import { messagingApi } from '@/services/api';
@@ -31,6 +32,8 @@ type PilgrimItem = {
 };
 
 const GroupeScreen = () => {
+    const colors = useThemeColors() as any;
+    const isDarkMode = useIsDarkMode();
     const router = useRouter();
     const params = useLocalSearchParams();
     const { userMode, user } = useUser();
@@ -217,7 +220,7 @@ const GroupeScreen = () => {
     };
 
     const renderMemberCard = ({ item }: { item: PilgrimItem }) => (
-        <View style={styles.memberCard}>
+        <View style={[styles.memberCard, { backgroundColor: colors.surface }]}>
             <Image
                 source={{
                     uri:
@@ -227,7 +230,7 @@ const GroupeScreen = () => {
                 style={styles.memberPhoto}
             />
             <View style={styles.memberInfo}>
-                <Text style={styles.memberName}>{`${item.firstName || ''} ${item.lastName || ''}`.trim() || 'Pèlerin'}</Text>
+                <Text style={[styles.memberName, { color: colors.text }]}>{`${item.firstName || ''} ${item.lastName || ''}`.trim() || 'Pèlerin'}</Text>
                 <View style={styles.statusRow}>
                     <View style={[
                         styles.statusDot,
@@ -246,7 +249,7 @@ const GroupeScreen = () => {
 
     const renderAvailablePilgrim = ({ item }: { item: PilgrimItem }) => (
         <TouchableOpacity
-            style={styles.availablePilgrimCard}
+            style={[styles.availablePilgrimCard, { backgroundColor: colors.background }]}
             onPress={() => handleAddMember(item)}
         >
             <Image
@@ -258,61 +261,61 @@ const GroupeScreen = () => {
                 style={styles.memberPhoto}
             />
             <View style={styles.memberInfo}>
-                <Text style={styles.memberName}>{`${item.firstName || ''} ${item.lastName || ''}`.trim() || 'Pèlerin'}</Text>
+                <Text style={[styles.memberName, { color: colors.text }]}>{`${item.firstName || ''} ${item.lastName || ''}`.trim() || 'Pèlerin'}</Text>
             </View>
             <View style={styles.addIconContainer}>
-                <Ionicons name="add-circle" size={28} color={theme.colors.primary} />
+                <Ionicons name="add-circle" size={28} color={colors.primary} />
             </View>
         </TouchableOpacity>
     );
 
     return (
-        <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="dark-content" />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
 
             {/* Header with Close Button */}
-            <View style={styles.header}>
+            <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn}>
-                    <Ionicons name="close" size={28} color={theme.colors.secondary} />
+                    <Ionicons name="close" size={28} color={colors.text} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>{groupName}</Text>
+                <Text style={[styles.headerTitle, { color: colors.text }]}>{groupName}</Text>
                 <View style={{ width: 28 }} />
             </View>
 
             <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
                 {/* Group Info Card */}
-                <View style={styles.infoCard}>
+                <View style={[styles.infoCard, { backgroundColor: colors.surface }]}>
                     <View style={styles.infoRow}>
                         <View style={styles.infoItem}>
-                            <MaterialCommunityIcons name="map-marker" size={24} color={theme.colors.primary} />
+                            <MaterialCommunityIcons name="map-marker" size={24} color={colors.primary} />
                             <View style={styles.infoTextContainer}>
-                                <Text style={styles.infoLabel}>Destination</Text>
-                                <Text style={styles.infoValue}>{groupCity}</Text>
+                                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Destination</Text>
+                                <Text style={[styles.infoValue, { color: colors.text }]}>{groupCity}</Text>
                             </View>
                         </View>
                         <View style={styles.infoItem}>
-                            <MaterialCommunityIcons name="calendar" size={24} color={theme.colors.primary} />
+                            <MaterialCommunityIcons name="calendar" size={24} color={colors.primary} />
                             <View style={styles.infoTextContainer}>
-                                <Text style={styles.infoLabel}>Departure Date</Text>
-                                <Text style={styles.infoValue}>{groupDate}</Text>
+                                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Departure Date</Text>
+                                <Text style={[styles.infoValue, { color: colors.text }]}>{groupDate}</Text>
                             </View>
                         </View>
                     </View>
 
-                    <View style={styles.capacitySection}>
+                    <View style={[styles.capacitySection, { borderTopColor: colors.border }]}>
                         <View style={styles.capacityHeader}>
-                            <MaterialCommunityIcons name="account-group" size={24} color={theme.colors.primary} />
-                            <Text style={styles.capacityTitle}>Group Capacity</Text>
+                            <MaterialCommunityIcons name="account-group" size={24} color={colors.primary} />
+                            <Text style={[styles.capacityTitle, { color: colors.text }]}>Group Capacity</Text>
                         </View>
                         <View style={styles.progressContainer}>
-                            <View style={styles.progressBar}>
-                                <View style={[styles.progressFill, { width: `${(members.length / maxPilgrims) * 100}%` }]} />
+                            <View style={[styles.progressBar, { backgroundColor: isDarkMode ? '#2E3B56' : '#F0F0F0' }]}>
+                                <View style={[styles.progressFill, { width: `${(members.length / maxPilgrims) * 100}%`, backgroundColor: colors.primary }]} />
                             </View>
-                            <Text style={styles.progressText}>{members.length}/{maxPilgrims} Pilgrims</Text>
+                            <Text style={[styles.progressText, { color: colors.textSecondary }]}>{members.length}/{maxPilgrims} Pilgrims</Text>
                         </View>
                         <View style={styles.spotsContainer}>
-                            <View style={[styles.spotsBadge, { backgroundColor: remainingSpots > 0 ? '#E8F5E9' : '#FFEBEE' }]}>
-                                <Text style={[styles.spotsText, { color: remainingSpots > 0 ? '#4CAF50' : '#F44336' }]}>
+                            <View style={[styles.spotsBadge, { backgroundColor: remainingSpots > 0 ? (isDarkMode ? 'rgba(76, 175, 80, 0.15)' : '#E8F5E9') : (isDarkMode ? 'rgba(244, 67, 54, 0.15)' : '#FFEBEE') }]}>
+                                <Text style={[styles.spotsText, { color: remainingSpots > 0 ? '#4CAF50' : '#FF5252' }]}>
                                     {remainingSpots > 0 ? `${remainingSpots} spots remaining` : 'Group Full'}
                                 </Text>
                             </View>
@@ -323,7 +326,7 @@ const GroupeScreen = () => {
                 {/* Action Buttons */}
                 <View style={styles.actionButtons}>
                     <TouchableOpacity
-                        style={[styles.actionBtn, styles.chatBtn]}
+                        style={[styles.actionBtn, styles.chatBtn, { backgroundColor: colors.primary }]}
                         onPress={handleOpenChat}
                     >
                         <MaterialCommunityIcons name="message-text" size={20} color="#fff" />
@@ -341,7 +344,7 @@ const GroupeScreen = () => {
                 </View>
 
                 <View style={styles.membersSection}>
-                    <Text style={styles.sectionTitle}>Members</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>Members</Text>
 
                     {members.length > 0 ? (
                         <FlatList
@@ -353,9 +356,9 @@ const GroupeScreen = () => {
                         />
                     ) : (
                         <View style={styles.emptyMembersState}>
-                            <MaterialCommunityIcons name="account-off-outline" size={80} color={theme.colors.border} />
-                            <Text style={styles.emptyMembersText}>No members in this group yet</Text>
-                            <Text style={styles.emptyMembersSubtext}>Tap &quot;Add Pilgrim&quot; to add members</Text>
+                            <MaterialCommunityIcons name="account-off-outline" size={80} color={colors.border} />
+                            <Text style={[styles.emptyMembersText, { color: colors.text }]}>No members in this group yet</Text>
+                            <Text style={[styles.emptyMembersSubtext, { color: colors.textSecondary }]}>Tap &quot;Add Pilgrim&quot; to add members</Text>
                         </View>
                     )}
                 </View>
@@ -368,15 +371,15 @@ const GroupeScreen = () => {
                 transparent={true}
             >
                 <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
+                    <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
                         <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Add Pilgrim to Group</Text>
+                            <Text style={[styles.modalTitle, { color: colors.text }]}>Add Pilgrim to Group</Text>
                             <TouchableOpacity onPress={() => setAddMemberModalVisible(false)}>
-                                <Ionicons name="close" size={24} color={theme.colors.secondary} />
+                                <Ionicons name="close" size={24} color={colors.text} />
                             </TouchableOpacity>
                         </View>
 
-                        <Text style={styles.modalSubtitle}>
+                        <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
                             Select a pilgrim to add to {groupName}
                         </Text>
 
@@ -387,8 +390,8 @@ const GroupeScreen = () => {
                             contentContainerStyle={styles.availableList}
                             ListEmptyComponent={
                                 <View style={styles.emptyState}>
-                                    <MaterialCommunityIcons name="account-off" size={60} color={theme.colors.border} />
-                                    <Text style={styles.emptyText}>No available pilgrims</Text>
+                                    <MaterialCommunityIcons name="account-off" size={60} color={colors.border} />
+                                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No available pilgrims</Text>
                                 </View>
                             }
                         />

@@ -11,14 +11,14 @@ import {
     Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useThemeColors } from '@/hooks/useThemeColors';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { useTrans } from '@/hooks/useTrans';
 import { freelanceComplianceApi } from '@/services/api';
 
 export default function DocumentsPage() {
     const router = useRouter();
     const colors = useThemeColors() as any;
-    const isDarkMode = false;
+    const isDarkMode = useIsDarkMode();
     const { t } = useTrans();
 
     const PAGE_BG = isDarkMode ? '#111111' : '#F4F5F7';

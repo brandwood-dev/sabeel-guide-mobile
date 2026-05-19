@@ -9,6 +9,8 @@ import {
     View,
     Modal,
     StatusBar,
+    DevSettings,
+    I18nManager,
 } from 'react-native';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '@/store/store';
@@ -16,6 +18,7 @@ import { setLanguage, SupportedLang } from '@/store/uiSlice';
 import { useTrans } from '@/hooks/useTrans';
 import { theme } from '@/theme';
 import { Button } from '@/components/common/Button';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type Lang = SupportedLang;
 
@@ -35,8 +38,28 @@ export default function LanguagePage() {
     const [selected, setSelected] = useState<Lang>(currentLanguage || 'fr');
     const [showSuccess, setShowSuccess] = useState(false);
 
-    const handleSave = () => {
+    const handleSave = async () => {
+        const prevIsRTL = I18nManager.isRTL;
+        const nextIsRTL = selected === 'ar';
+
         dispatch(setLanguage(selected));
+        try {
+            await AsyncStorage.setItem('@sg_language', selected);
+        } catch {
+            // ignore
+        }
+
+        if (prevIsRTL !== nextIsRTL) {
+            try {
+                I18nManager.allowRTL(true);
+                I18nManager.forceRTL(nextIsRTL);
+                DevSettings.reload();
+                return;
+            } catch {
+                // ignore
+            }
+        }
+
         setShowSuccess(true);
     };
 

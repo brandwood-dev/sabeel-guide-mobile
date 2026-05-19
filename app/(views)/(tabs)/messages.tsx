@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     StyleSheet,
     Text,
@@ -14,9 +14,12 @@ import {
     StatusBar,
     Modal,
     Alert,
+    Animated,
+    RefreshControl,
 } from 'react-native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { theme } from '@/theme';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { useRouter } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 import { messagingApi } from '@/services/api';
@@ -29,6 +32,55 @@ import { Swipeable } from 'react-native-gesture-handler';
 const { width } = Dimensions.get('window');
 
 const getConversationsCacheKey = (roleKey: string) => `@guide_conversations_cache_${roleKey}`;
+
+const inMemoryConversationsCache: Record<string, any[] | undefined> = {};
+
+const ThreeDots = ({ color }: { color: string }) => {
+    const a1 = useRef(new Animated.Value(0)).current;
+    const a2 = useRef(new Animated.Value(0)).current;
+    const a3 = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        const make = (v: Animated.Value, delay: number) =>
+            Animated.loop(
+                Animated.sequence([
+                    Animated.delay(delay),
+                    Animated.timing(v, { toValue: 1, duration: 260, useNativeDriver: true }),
+                    Animated.timing(v, { toValue: 0, duration: 260, useNativeDriver: true }),
+                    Animated.delay(360),
+                ]),
+            );
+
+        const l1 = make(a1, 0);
+        const l2 = make(a2, 120);
+        const l3 = make(a3, 240);
+        l1.start();
+        l2.start();
+        l3.start();
+        return () => {
+            l1.stop();
+            l2.stop();
+            l3.stop();
+        };
+    }, [a1, a2, a3]);
+
+    const dot = (v: Animated.Value) => ({
+        opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }),
+        transform: [
+            {
+                translateY: v.interpolate({ inputRange: [0, 1], outputRange: [2, -3] }),
+            },
+        ],
+    });
+
+    return (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Animated.View style={[{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }, dot(a1)]} />
+            <Animated.View style={[{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }, dot(a2)]} />
+            <Animated.View style={[{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }, dot(a3)]} />
+        </View>
+    );
+};
 
 type ConversationItem = {
     id: string;
@@ -52,15 +104,20 @@ const dedupeConversationsById = (items: ConversationItem[]) => {
 };
 
 const ChatScreen = () => {
+    const colors = useThemeColors() as any;
+    const isDarkMode = useIsDarkMode();
     const router = useRouter();
     const navigation = useNavigation<any>();
     const { user, unreadMessagesCount, setUnreadMessagesCount, userMode } = useUser();
-    const roleKey = String((user as any)?.activeRole || userMode || 'guide') === 'agency' ? 'agency' : 'freelance';
+    const isAgencyRole = String((user as any)?.activeRole || '') === 'agency' || userMode === 'agency';
+    const roleKey = isAgencyRole ? 'agency' : 'freelance';
     const CONVERSATIONS_CACHE_KEY = getConversationsCacheKey(roleKey);
     const [searchQuery, setSearchQuery] = useState('');
     const [activeFilter, setActiveFilter] = useState('Tous');
     const [conversations, setConversations] = useState<ConversationItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [initialLoading, setInitialLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [confirmModal, setConfirmModal] = useState<{
         visible: boolean;
         type: 'archive' | 'delete';
@@ -80,6 +137,19 @@ const ChatScreen = () => {
             // ignore
         }
     };
+
+    const isConversationInCurrentSpace = useCallback((conv: any) => {
+        const hasAgencyScope = Boolean(conv?.agencyId || conv?.groupId);
+        const hasFreelanceScope = Boolean(conv?.freelanceGroupId);
+
+        if (isAgencyRole) {
+            if (hasFreelanceScope) return false;
+            return hasAgencyScope;
+        }
+
+        if (hasFreelanceScope) return true;
+        return !hasAgencyScope;
+    }, [isAgencyRole]);
 
     const handleArchive = (conversationId: string) => {
         setConfirmModal({ visible: true, type: 'archive', conversationId });
@@ -131,12 +201,22 @@ const ChatScreen = () => {
 
     const loadFromCache = async () => {
         try {
+            const mem = inMemoryConversationsCache[CONVERSATIONS_CACHE_KEY];
+            if (Array.isArray(mem) && mem.length) {
+                setConversations(mem);
+                setLoading(false);
+                setInitialLoading(false);
+                return;
+            }
             const cached = await AsyncStorage.getItem(CONVERSATIONS_CACHE_KEY);
             if (cached) {
                 const parsed = JSON.parse(cached);
                 if (Array.isArray(parsed)) {
-                    setConversations(parsed);
+                    // defensive filter (cache may contain stale conversations from other space)
+                    const filtered = (parsed as any[]).filter((c: any) => isConversationInCurrentSpace(c));
+                    setConversations(filtered);
                     setLoading(false);
+                    setInitialLoading(false);
                 }
             }
         } catch (e) {
@@ -150,7 +230,23 @@ const ChatScreen = () => {
             const res = await messagingApi.getMyConversations();
             const list = Array.isArray(res.data) ? res.data : (Array.isArray(res.data?.conversations) ? res.data.conversations : []);
 
-            const mapped: ConversationItem[] = list.map((conv: any) => {
+            // HARD filter by current space to prevent mixing between agency vs freelance.
+            const scopedList = (Array.isArray(list) ? list : []).filter((conv: any) => {
+                const hasAgencyScope = Boolean(conv?.agencyId || conv?.groupId);
+                const hasFreelanceScope = Boolean(conv?.freelanceGroupId);
+
+                if (isAgencyRole) {
+                    // Agency: allow agency/group conversations; exclude freelance-group conversations
+                    if (hasFreelanceScope) return false;
+                    return hasAgencyScope;
+                }
+
+                // Freelance: allow freelance-group OR direct conv (no agency + no group)
+                if (hasFreelanceScope) return true;
+                return !hasAgencyScope;
+            });
+
+            const mapped: ConversationItem[] = scopedList.map((conv: any) => {
                 const rawTs =
                     conv.lastMessageAt ||
                     conv.lastMessage?.createdAt ||
@@ -191,20 +287,39 @@ const ChatScreen = () => {
             });
 
             if (mounted.current) {
-                const next = dedupeConversationsById(mapped).sort((a, b) => (b.lastMessageTs || 0) - (a.lastMessageTs || 0));
-                setConversations(next);
-                saveToCache(next);
+                const mappedSorted = dedupeConversationsById(mapped)
+                .sort((a, b) => (b.lastMessageTs || 0) - (a.lastMessageTs || 0));
+
+                setConversations(mappedSorted);
+                inMemoryConversationsCache[CONVERSATIONS_CACHE_KEY] = mappedSorted;
+                saveToCache(mappedSorted);
             }
         } catch (e) {
-            if (mounted.current) {
-                setConversations([]);
-            }
+            // ignore
         } finally {
             if (mounted.current) {
                 setLoading(false);
+                setInitialLoading(false);
             }
         }
     };
+
+    const onRefresh = useCallback(async () => {
+        const mounted = { current: true };
+        setRefreshing(true);
+        try {
+            await fetchConversations(mounted);
+        } finally {
+            setRefreshing(false);
+        }
+    }, [fetchConversations]);
+
+    // When switching space, reset state quickly to avoid showing stale conversations
+    useEffect(() => {
+        setConversations([]);
+        setActiveFilter('Tous');
+        setSearchQuery('');
+    }, [CONVERSATIONS_CACHE_KEY]);
 
     useEffect(() => {
         globalUnreadRef.current = Number.isFinite(unreadMessagesCount) ? unreadMessagesCount : 0;
@@ -269,6 +384,10 @@ const ChatScreen = () => {
                     const conversationId = payload?.conversation?.id ? String(payload.conversation.id) : '';
                     const message = payload?.message;
                     if (!conversationId || !message) return;
+
+                    // Ignore realtime events for conversations outside current space
+                    const convPayload = payload?.conversation || {};
+                    if (!isConversationInCurrentSpace(convPayload)) return;
 
                     const senderUserId = message?.senderUserId ? String(message.senderUserId) : '';
                     const currentUserId = user?.id ? String(user.id) : '';
@@ -392,25 +511,25 @@ const ChatScreen = () => {
 
     const renderInboxItem = ({ item }: { item: ConversationItem }) => (
         <Swipeable renderRightActions={() => renderRightActions(String(item.id))}>
-            <TouchableOpacity style={styles.chatCard} onPress={() => openDiscussion(item)}>
+            <TouchableOpacity style={[styles.chatCard, { backgroundColor: colors.surface }]} onPress={() => openDiscussion(item)}>
                 <View style={styles.photoContainer}>
                     <Image
                         source={{
                             uri:
                                 getUserAvatarUrl(item.imageUrl) ||
-                                `https://ui-avatars.com/api/?name=${encodeURIComponent(item.displayName || 'User')}&background=2C5F2D&color=fff`,
+                                `https://ui-avatars.com/api/?name=${encodeURIComponent(item.displayName || 'User')}&background=3A7D44&color=fff`,
                         }}
-                        style={styles.chatPhoto}
+                        style={[styles.chatPhoto, { backgroundColor: isDarkMode ? '#121824' : '#F1F3F5' }]}
                     />
-                    {!item.isLocked && <View style={styles.onlineBadge} />}
+                    {!item.isLocked && <View style={[styles.onlineBadge, { borderColor: colors.surface }]} />}
                 </View>
                 <View style={styles.chatDetails}>
                     <View style={styles.chatHeader}>
-                        <Text style={styles.chatName} numberOfLines={1}>{item.displayName}</Text>
+                        <Text style={[styles.chatName, { color: colors.text }]} numberOfLines={1}>{item.displayName}</Text>
                         <View style={styles.timeWrap}>
-                            <Text style={styles.chatTime}>{item.lastMessageAt || ''}</Text>
+                            <Text style={[styles.chatTime, { color: colors.textSecondary }]}>{item.lastMessageAt || ''}</Text>
                             {item.unread && item.unread > 0 ? (
-                                <View style={styles.unreadBadge}>
+                                <View style={[styles.unreadBadge, { backgroundColor: colors.primary }]}>
                                     <Text style={styles.unreadBadgeText}>
                                         {item.unread > 99 ? '99+' : String(item.unread)}
                                     </Text>
@@ -419,19 +538,19 @@ const ChatScreen = () => {
                         </View>
                     </View>
                     {item.roleLabel ? (
-                        <Text style={styles.chatRole} numberOfLines={1}>
+                        <Text style={[styles.chatRole, { color: colors.textSecondary }]} numberOfLines={1}>
                             {item.roleLabel}
                         </Text>
                     ) : null}
                     <View style={styles.chatFooter}>
-                        <Text style={styles.lastMessage} numberOfLines={1}>
+                        <Text style={[styles.lastMessage, { color: colors.textSecondary }]} numberOfLines={1}>
                             {item.lastMessageText || (item.isLocked ? 'Nouvelle demande de réservation' : 'Discussion')}
                         </Text>
                     </View>
                     {item.isLocked && (
                         <View style={styles.groupTag}>
-                            <Ionicons name="time-outline" size={12} color={theme.colors.muted} />
-                            <Text style={styles.groupTagText}>En attente de validation</Text>
+                            <Ionicons name="time-outline" size={12} color={colors.textSecondary} />
+                            <Text style={[styles.groupTagText, { color: colors.textSecondary }]}>En attente de validation</Text>
                         </View>
                     )}
                 </View>
@@ -440,27 +559,28 @@ const ChatScreen = () => {
     );
 
     return (
-        <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="dark-content" />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
             <View style={styles.inboxContainer}>
                 {/* Inbox Header */}
-                <View style={styles.topHeader}>
-                    <Text style={styles.headerTitle}>Messages</Text>
+                <View style={[styles.topHeader, { backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.divider, paddingVertical: 14 }]}>
+                    <Text style={[styles.headerTitle, { color: colors.text }]}>Messages</Text>
                     <TouchableOpacity
                         style={styles.headerActionButton}
                         onPress={() => router.push('/archive' as any)}
                     >
-                        <Ionicons name="archive-outline" size={22} color={theme.colors.secondary} />
+                        <Ionicons name="archive-outline" size={22} color={colors.text} />
                     </TouchableOpacity>
                 </View>
 
                 {/* Search Bar */}
-                <View style={styles.searchWrapper}>
-                    <View style={styles.searchBar}>
-                        <Ionicons name="search-outline" size={20} color={theme.colors.muted} />
+                <View style={[styles.searchWrapper, { backgroundColor: colors.surface, paddingVertical: 10, marginBottom: 0 }]}>
+                    <View style={[styles.searchBar, { backgroundColor: isDarkMode ? '#121824' : '#F8F9FA', borderColor: colors.border }]}>
+                        <Ionicons name="search-outline" size={20} color={colors.textSecondary} />
                         <TextInput
-                            style={styles.searchInput}
+                            style={[styles.searchInput, { color: colors.text }]}
                             placeholder="Search conversations..."
+                            placeholderTextColor={colors.textSecondary}
                             value={searchQuery}
                             onChangeText={setSearchQuery}
                         />
@@ -468,7 +588,7 @@ const ChatScreen = () => {
                 </View>
 
                 {/* Filters */}
-                <View style={styles.filterWrapper}>
+                <View style={[styles.filterWrapper, { backgroundColor: colors.background }]}>
                     <ScrollView
                         horizontal
                         showsHorizontalScrollIndicator={false}
@@ -478,10 +598,10 @@ const ChatScreen = () => {
                         {['Tous', 'Pèlerins', 'Groupes', 'Agences', 'Accompagnants'].map((filter) => (
                             <TouchableOpacity
                                 key={filter}
-                                style={[styles.filterChip, activeFilter === filter && styles.activeFilterChip]}
+                                style={[styles.filterChip, { backgroundColor: isDarkMode ? '#1E2638' : '#F1F3F5', borderColor: isDarkMode ? '#2E3B56' : '#E9ECEF' }, activeFilter === filter && [styles.activeFilterChip, { backgroundColor: colors.primary, borderColor: colors.primary }]]}
                                 onPress={() => setActiveFilter(filter)}
                             >
-                                <Text style={[styles.filterChipText, activeFilter === filter && styles.activeFilterChipText]}>
+                                <Text style={[styles.filterChipText, { color: colors.textSecondary }, activeFilter === filter && [styles.activeFilterChipText, { color: '#fff' }]]}>
                                     {filter}
                                 </Text>
                             </TouchableOpacity>
@@ -489,15 +609,69 @@ const ChatScreen = () => {
                     </ScrollView>
                 </View>
 
-                <FlatList
-                    data={filteredChats}
-                    keyExtractor={(item) => item.id}
-                    renderItem={renderInboxItem}
-                    contentContainerStyle={styles.listContainer}
-                    showsVerticalScrollIndicator={false}
-                    refreshing={loading}
-                    onRefresh={() => { }}
-                />
+                <View style={{ flex: 1 }}>
+                    <FlatList
+                        data={filteredChats}
+                        keyExtractor={(item) => item.id}
+                        renderItem={renderInboxItem}
+                        contentContainerStyle={styles.listContainer}
+                        showsVerticalScrollIndicator={false}
+                        refreshControl={
+                            <RefreshControl
+                                refreshing={refreshing}
+                                onRefresh={onRefresh}
+                                tintColor="transparent"
+                                colors={['transparent']}
+                                progressBackgroundColor="transparent"
+                            />
+                        }
+                    />
+
+                    {initialLoading && (!Array.isArray(conversations) || conversations.length === 0) ? (
+                        <View
+                            pointerEvents="none"
+                            style={{
+                                position: 'absolute',
+                                left: 0,
+                                top: 0,
+                                right: 0,
+                                bottom: 0,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
+                        >
+                            <ThreeDots color={colors.primary} />
+                        </View>
+                    ) : null}
+
+                    {refreshing ? (
+                        <View
+                            pointerEvents="none"
+                            style={{
+                                position: 'absolute',
+                                left: 0,
+                                top: 0,
+                                right: 0,
+                                bottom: 0,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
+                        >
+                            <View
+                                style={{
+                                    paddingHorizontal: 14,
+                                    paddingVertical: 10,
+                                    borderRadius: 16,
+                                    backgroundColor: 'rgba(255,255,255,0.9)',
+                                    borderWidth: 1,
+                                    borderColor: 'rgba(0,0,0,0.06)',
+                                }}
+                            >
+                                <ThreeDots color="#16A34A" />
+                            </View>
+                        </View>
+                    ) : null}
+                </View>
 
                 <Modal
                     visible={confirmModal.visible}
@@ -506,16 +680,16 @@ const ChatScreen = () => {
                     onRequestClose={() => setConfirmModal({ ...confirmModal, visible: false })}
                 >
                     <TouchableOpacity
-                        style={styles.modalOverlay}
+                        style={[styles.modalOverlay, { backgroundColor: isDarkMode ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.4)' }]}
                         activeOpacity={1}
                         onPress={() => setConfirmModal({ ...confirmModal, visible: false })}
                     >
-                        <View style={styles.modalContent}>
-                            <View style={styles.modalIndicator} />
-                            <Text style={styles.modalTitle}>
+                        <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+                            <View style={[styles.modalIndicator, { backgroundColor: isDarkMode ? '#2E3B56' : '#E5E7EB' }]} />
+                            <Text style={[styles.modalTitle, { color: colors.text }]}>
                                 {confirmModal.type === 'archive' ? 'Archiver la discussion' : 'Supprimer la discussion'}
                             </Text>
-                            <Text style={styles.modalMessage}>
+                            <Text style={[styles.modalMessage, { color: colors.textSecondary }]}>
                                 {confirmModal.type === 'archive'
                                     ? 'Voulez-vous archiver cette conversation ? Elle pourra être retrouvée dans vos archives.'
                                     : 'Cette action est définitive. Voulez-vous vraiment supprimer cette discussion ?'}
@@ -525,7 +699,7 @@ const ChatScreen = () => {
                                 <TouchableOpacity
                                     style={[
                                         styles.confirmBtn,
-                                        { backgroundColor: confirmModal.type === 'archive' ? theme.colors.primary : '#EF4444' },
+                                        { backgroundColor: confirmModal.type === 'archive' ? colors.primary : '#EF4444' },
                                     ]}
                                     onPress={executeConfirmAction}
                                 >
@@ -534,10 +708,10 @@ const ChatScreen = () => {
                                     </Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                    style={styles.cancelBtn}
+                                    style={[styles.cancelBtn, { backgroundColor: isDarkMode ? '#2E3B56' : '#F3F4F6' }]}
                                     onPress={() => setConfirmModal({ ...confirmModal, visible: false })}
                                 >
-                                    <Text style={styles.cancelBtnText}>Annuler</Text>
+                                    <Text style={[styles.cancelBtnText, { color: colors.text }]}>Annuler</Text>
                                 </TouchableOpacity>
                             </View>
                         </View>

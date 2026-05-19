@@ -1,12 +1,15 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
-import { useEffect } from 'react';
-import { Platform } from 'react-native';
+import { useEffect, useState } from 'react';
+import { DevSettings, I18nManager, Platform } from 'react-native';
 import { useFonts } from 'expo-font';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Provider } from 'react-redux';
 import { store } from '@/store/store';
+import { setLanguage } from '@/store/uiSlice';
+import { useDispatch, useSelector } from 'react-redux';
+import type { RootState } from '@/store/store';
 import { UserProvider } from '@/context/UserContext';
 import { ChatProvider } from '@/context/ChatContext';
 import { NotificationWrapper } from '@/components/NotificationWrapper';
@@ -17,6 +20,54 @@ import { pruneIncomingOffers, putIncomingOffer } from '@/services/callCache';
 import { useUser } from '@/context/UserContext';
 import { useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ThemeProvider } from '@/context/ThemeContext';
+
+const LANGUAGE_STORAGE_KEY = '@sg_language';
+
+function LanguageBootstrap() {
+    const dispatch = useDispatch();
+    const language = useSelector((s: RootState) => s.ui.language);
+    const didReloadRef = useRef(false);
+    const [bootstrapped, setBootstrapped] = useState(false);
+
+    useEffect(() => {
+        let mounted = true;
+        (async () => {
+            try {
+                const stored = await AsyncStorage.getItem(LANGUAGE_STORAGE_KEY);
+                if (!mounted) return;
+                if (stored === 'fr' || stored === 'en' || stored === 'ar') {
+                    dispatch(setLanguage(stored));
+                }
+            } catch {
+                // ignore
+            } finally {
+                if (mounted) setBootstrapped(true);
+            }
+        })();
+        return () => {
+            mounted = false;
+        };
+    }, [dispatch]);
+
+    useEffect(() => {
+        if (!bootstrapped) return;
+        const nextIsRTL = language === 'ar';
+        const currentIsRTL = I18nManager.isRTL;
+        if (nextIsRTL !== currentIsRTL && !didReloadRef.current) {
+            try {
+                I18nManager.allowRTL(true);
+                I18nManager.forceRTL(nextIsRTL);
+                didReloadRef.current = true;
+                DevSettings.reload();
+            } catch {
+                // ignore
+            }
+        }
+    }, [bootstrapped, language]);
+
+    return null;
+}
 
 export default function RootLayout() {
     const [fontsLoaded] = useFonts({
@@ -103,15 +154,18 @@ export default function RootLayout() {
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>
             <Provider store={store}>
-                <UserProvider>
-                    <NotificationWrapper>
-                        <ChatProvider>
-                            <CallOfferListener />
-                            <Stack screenOptions={{ headerShown: false }} />
-                            <StatusBar style="auto" />
-                        </ChatProvider>
-                    </NotificationWrapper>
-                </UserProvider>
+                <LanguageBootstrap />
+                <ThemeProvider>
+                    <UserProvider>
+                        <NotificationWrapper>
+                            <ChatProvider>
+                                <CallOfferListener />
+                                <Stack screenOptions={{ headerShown: false }} />
+                                <StatusBar style="auto" />
+                            </ChatProvider>
+                        </NotificationWrapper>
+                    </UserProvider>
+                </ThemeProvider>
             </Provider>
         </GestureHandlerRootView>
     );

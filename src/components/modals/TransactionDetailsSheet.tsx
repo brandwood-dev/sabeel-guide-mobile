@@ -23,8 +23,9 @@ type Tx = {
 
 const formatMoney = (amountCents?: number, currency?: string) => {
   const amount = typeof amountCents === 'number' ? amountCents : 0;
-  const cur = String(currency || 'MAD').toUpperCase();
-  return `${(amount / 100).toFixed(2)} ${cur}`;
+  const cur = String(currency || 'TND').toUpperCase();
+  const divisor = cur === 'TND' ? 1000 : 100;
+  return `${(amount / divisor).toFixed(2)} ${cur}`;
 };
 
 const formatDateTime = (value?: string) => {

@@ -28,9 +28,10 @@ import { theme } from '@/theme';
 import { Button } from '@/components/common/Button';
 import { ActivityIndicator } from 'react-native';
 import { useTrans } from '@/hooks/useTrans';
-import { useThemeColors } from '@/hooks/useThemeColors';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { ProfileMenuItem } from '@/components/common/ProfileMenuItem';
 import { useUser } from '@/context/UserContext';
+import { useThemeContext } from '@/context/ThemeContext';
 import { authService } from '@/services/authService';
 import { getUserAvatarUrl } from '@/services/media';
 import { freelanceComplianceApi, reviewsApi } from '@/services/api';
@@ -44,9 +45,20 @@ export default function ProfileScreen() {
     const { t, language } = useTrans();
     const isRTL = language === 'ar';
     const colors = useThemeColors() as any;
+    const ss = getStyles(colors);
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const { userMode, setUserMode, setAgencyId, setShowAgencyIdPopup } = useUser();
+    const {
+        userMode,
+        setUserMode,
+        setAgencyId,
+        setShowAgencyIdPopup,
+        setUser: setContextUser,
+        onboardingStep,
+        setOnboardingStep,
+        isBottomNavVisible,
+        setBottomNavVisibility,
+    } = useUser();
 
 
 
@@ -155,6 +167,11 @@ export default function ProfileScreen() {
                 photo: profileData.photoUrl
             });
             setUser(profileData);
+            try {
+                setContextUser(profileData);
+            } catch (e) {
+                // ignore
+            }
 
             try {
                 setAgencyId(profileData?.agencyId ? String(profileData.agencyId) : null);
@@ -196,6 +213,11 @@ export default function ProfileScreen() {
                 if (localData) {
                     const parsed = JSON.parse(localData);
                     setUser(parsed);
+                    try {
+                        setContextUser(parsed);
+                    } catch (e) {
+                        // ignore
+                    }
                     setTimeout(() => {
                         fetchCompliance(parsed?.activeRole);
                     }, 50);
@@ -424,7 +446,7 @@ export default function ProfileScreen() {
         }
     };
 
-    const [darkMode, setDarkMode] = useState(false);
+    const { isDarkMode: darkMode, setDarkMode } = useThemeContext();
 
     const [searchFAQ, setSearchFAQ] = useState('');
 
@@ -432,7 +454,6 @@ export default function ProfileScreen() {
     const scrollY = useRef(new Animated.Value(0)).current;
     const switchAnim = useRef(new Animated.Value(0)).current;
     const posAnim = useRef(new Animated.Value(0)).current;
-    const { isBottomNavVisible, setBottomNavVisibility, onboardingStep, setOnboardingStep } = useUser();
 
     // Onboarding pulse animation
     const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -572,7 +593,7 @@ export default function ProfileScreen() {
     // Tab: Compte
     const renderMonCompte = () => (
         <Animated.ScrollView
-            style={{ flex: 1, backgroundColor: theme.colors.background }}
+            style={{ flex: 1, backgroundColor: colors.background }}
             contentContainerStyle={{
                 paddingTop: HEADER_FIXED + 5,
                 paddingHorizontal: 20,
@@ -583,10 +604,10 @@ export default function ProfileScreen() {
             scrollEventThrottle={16}
         >
             {onboardingStep === 'personal_info' && !isAgencyRole && (
-                <View style={[ss.card, { backgroundColor: theme.colors.primary + '10', borderColor: theme.colors.primary, borderWidth: 1.5, marginBottom: 20, padding: 16 }]}>
+                <View style={[ss.card, { backgroundColor: colors.primary + '10', borderColor: colors.primary, borderWidth: 1.5, marginBottom: 20, padding: 16 }]}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                         <View style={[ss.sheetIconWrap, { marginBottom: 0, width: 44, height: 44 }]}>
-                            <Ionicons name="sparkles" size={24} color={theme.colors.primary} />
+                            <Ionicons name="sparkles" size={24} color={colors.primary} />
                         </View>
                         <View style={{ flex: 1 }}>
                             <Text style={[ss.modalTitle, { fontSize: 15, marginBottom: 2 }]}>Complétez votre profil !</Text>
@@ -594,7 +615,7 @@ export default function ProfileScreen() {
                         </View>
                     </View>
                     <TouchableOpacity
-                        style={[ss.sheetPrimaryBtn, { height: 40, marginTop: 12, backgroundColor: theme.colors.primary }]}
+                        style={[ss.sheetPrimaryBtn, { height: 40, marginTop: 12, backgroundColor: colors.primary }]}
                         onPress={() => {
                             setOnboardingStep('none');
                             router.push('/(complet_profile)/personal-info' as any);
@@ -747,7 +768,7 @@ export default function ProfileScreen() {
     // Tab: Avis
     const renderMesAvis = () => (
         <Animated.ScrollView
-            style={{ flex: 1, backgroundColor: theme.colors.background }}
+            style={{ flex: 1, backgroundColor: colors.background }}
             contentContainerStyle={{
                 paddingTop: HEADER_FIXED + 5,
                 paddingHorizontal: 24,
@@ -768,13 +789,13 @@ export default function ProfileScreen() {
 
             {reviewsLoading ? (
                 <View style={ss.emptyCard}>
-                    <ActivityIndicator color={theme.colors.primary} />
+                    <ActivityIndicator color={colors.primary} />
                     <Text style={[ss.emptyText, { marginTop: 10 }]}>{t('Chargement...')}</Text>
                 </View>
             ) : reviews.length === 0 ? (
                 <View style={ss.emptyCard}>
                     <View style={ss.emptyIcon}>
-                        <Ionicons name="chatbubbles-outline" size={48} color={theme.colors.primary} />
+                        <Ionicons name="chatbubbles-outline" size={48} color={colors.primary} />
                     </View>
                     <Text style={ss.emptyTitle}>{t('Aucun avis publié')}</Text>
                     <Text style={ss.emptyText}>
@@ -820,7 +841,7 @@ export default function ProfileScreen() {
     ];
 
     return (
-        <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
             <SafeAreaView style={{ flex: 1 }} edges={['bottom']}>
                 {/* Animated Header */}
                 <Animated.View style={[
@@ -878,7 +899,7 @@ export default function ProfileScreen() {
                                 <Text style={[
                                     ss.tabLabel,
                                     {
-                                        color: activeTab === i ? theme.colors.primary : theme.colors.muted,
+                                        color: activeTab === i ? colors.primary : colors.muted,
                                         fontWeight: activeTab === i ? '900' : '600',
                                     },
                                 ]}>
@@ -913,17 +934,17 @@ export default function ProfileScreen() {
                         <View style={ss.modalSheet}>
                             <View style={ss.sheetHandle} />
                             <TouchableOpacity style={ss.modalClose} onPress={() => setShowQRModal(false)}>
-                                <Ionicons name="close" size={24} color={theme.colors.muted} />
+                                <Ionicons name="close" size={24} color={colors.muted} />
                             </TouchableOpacity>
                             <Text style={ss.modalTitle}>Mon QR Code</Text>
                             <Text style={ss.modalSub}>Présentez ce code pour identification rapide.</Text>
                             <View style={ss.qrWrap}>
                                 <QRCode
-                                    value={user?.uniqueIdentifier || 'SABEEL-GUIDE'}
+                                    value={`SABEEL_GUIDE:${String(user?.id || '')}:${String(user?.uniqueIdentifier || '')}`}
                                     size={140}
-                                    color={theme.colors.primary}
+                                    color={colors.primary}
                                     backgroundColor="#fff"
-                                />
+                                ></QRCode>
                             </View>
                             <View style={ss.idBadge}>
                                 <Text style={ss.idText}>ID: {user?.uniqueIdentifier}</Text>
@@ -941,13 +962,13 @@ export default function ProfileScreen() {
                                 style={ss.modalClose}
                                 onPress={() => setShowSupportModal(false)}
                             >
-                                <Ionicons name="close" size={24} color={theme.colors.muted} />
+                                <Ionicons name="close" size={24} color={colors.muted} />
                             </TouchableOpacity>
 
                             <ScrollView showsVerticalScrollIndicator={false} style={{ width: '100%' }}>
                                 <View style={{ alignItems: 'center', marginTop: 10 }}>
                                     <View style={ss.sheetIconWrap}>
-                                        <Ionicons name="headset-outline" size={30} color={theme.colors.primary} />
+                                        <Ionicons name="headset-outline" size={30} color={colors.primary} />
                                     </View>
                                     <Text style={ss.modalTitle}>Centre de Support</Text>
                                     <Text style={ss.modalSub}>Posez votre question ou signalez une difficulté.</Text>
@@ -959,7 +980,7 @@ export default function ProfileScreen() {
                                         multiline
                                         numberOfLines={6}
                                         placeholder="Décrivez votre demande en détail..."
-                                        placeholderTextColor={theme.colors.muted}
+                                        placeholderTextColor={colors.muted}
                                         style={ss.textArea}
                                         value={supportMessage}
                                         onChangeText={setSupportMessage}
@@ -969,7 +990,7 @@ export default function ProfileScreen() {
 
                             <View style={{ padding: 20, width: '100%', marginBottom: insets.bottom }}>
                                 <TouchableOpacity
-                                    style={[ss.sheetPrimaryBtn, { backgroundColor: theme.colors.primary, marginTop: 0 }]}
+                                    style={[ss.sheetPrimaryBtn, { backgroundColor: colors.primary, marginTop: 0 }]}
                                     onPress={handleSendSupport}
                                     disabled={isSendingSupport}
                                 >
@@ -987,10 +1008,10 @@ export default function ProfileScreen() {
                         <TouchableOpacity activeOpacity={1} style={[ss.modalSheet, { paddingBottom: insets.bottom + 24 }]}>
                             <View style={ss.sheetHandle} />
                             <TouchableOpacity style={ss.modalClose} onPress={() => setShowLogoutSheet(false)}>
-                                <Ionicons name="close" size={22} color={theme.colors.muted} />
+                                <Ionicons name="close" size={22} color={colors.muted} />
                             </TouchableOpacity>
                             <View style={ss.sheetIconWrap}>
-                                <Ionicons name="log-out-outline" size={30} color={theme.colors.primary} />
+                                <Ionicons name="log-out-outline" size={30} color={colors.primary} />
                             </View>
                             <Text style={ss.sheetTitle}>{t('Se déconnecter')}</Text>
                             <Text style={ss.sheetDesc}>Êtes-vous sûr de vouloir vous déconnecter de votre mission ?</Text>
@@ -1012,7 +1033,7 @@ export default function ProfileScreen() {
                         <TouchableOpacity activeOpacity={1} style={[ss.modalSheet, { paddingBottom: insets.bottom + 24 }]}>
                             <View style={ss.sheetHandle} />
                             <TouchableOpacity style={ss.modalClose} onPress={() => setShowDeleteSheet(false)}>
-                                <Ionicons name="close" size={22} color={theme.colors.muted} />
+                                <Ionicons name="close" size={22} color={colors.muted} />
                             </TouchableOpacity>
                             <View style={[ss.sheetIconWrap, { backgroundColor: '#FFF5F5' }]}>
                                 <Ionicons name="trash-outline" size={30} color="#F44336" />
@@ -1022,11 +1043,11 @@ export default function ProfileScreen() {
                                 Attention : Cette action est irréversible. Vos données seront définitivement supprimées.
                             </Text>
                             <TouchableOpacity
-                                style={[ss.agreeRow, { borderColor: agreeDelete ? theme.colors.primary : theme.colors.border }]}
+                                style={[ss.agreeRow, { borderColor: agreeDelete ? colors.primary : colors.border }]}
                                 onPress={() => setAgreeDelete(!agreeDelete)}
                                 activeOpacity={0.8}
                             >
-                                <View style={[ss.checkbox, { backgroundColor: agreeDelete ? theme.colors.primary : 'transparent', borderColor: agreeDelete ? theme.colors.primary : theme.colors.border }]}>
+                                <View style={[ss.checkbox, { backgroundColor: agreeDelete ? colors.primary : 'transparent', borderColor: agreeDelete ? colors.primary : colors.border }]}>
                                     {agreeDelete && <Ionicons name="checkmark" size={12} color="#fff" />}
                                 </View>
                                 <Text style={ss.agreeText}>Je comprends et j&apos;accepte de supprimer mon compte.</Text>
@@ -1038,7 +1059,7 @@ export default function ProfileScreen() {
                                     <TextInput
                                         style={ss.modalInput}
                                         placeholder="Mot de passe actuel"
-                                        placeholderTextColor={theme.colors.muted}
+                                        placeholderTextColor={colors.muted}
                                         secureTextEntry
                                         value={deleteConfirmPassword}
                                         onChangeText={setDeleteConfirmPassword}
@@ -1051,7 +1072,7 @@ export default function ProfileScreen() {
                                 onPress={confirmDelete}
                                 loading={isDeleting}
                                 variant="primary"
-                                style={{ backgroundColor: (agreeDelete && deleteConfirmPassword) ? '#F44336' : theme.colors.divider, marginTop: 24, width: '100%' }}
+                                style={{ backgroundColor: (agreeDelete && deleteConfirmPassword) ? '#F44336' : colors.divider, marginTop: 24, width: '100%' }}
                                 disabled={!agreeDelete || !deleteConfirmPassword}
                             />
 
@@ -1078,7 +1099,7 @@ export default function ProfileScreen() {
                             >
                                 <View style={ss.sheetHandle} />
                                 <TouchableOpacity style={ss.modalClose} onPress={() => setShowJoinAgencyModal(false)}>
-                                    <Ionicons name="close" size={22} color={theme.colors.muted} />
+                                    <Ionicons name="close" size={22} color={colors.muted} />
                                 </TouchableOpacity>
 
                                 <Text style={ss.modalTitle}>Rejoindre une agence</Text>
@@ -1091,7 +1112,7 @@ export default function ProfileScreen() {
                                         value={agencyIdInput}
                                         onChangeText={setAgencyIdInput}
                                         placeholder="ID ou Code de l'agence"
-                                        placeholderTextColor={theme.colors.muted}
+                                        placeholderTextColor={colors.muted}
                                         autoCapitalize="characters"
                                     />
 
@@ -1100,7 +1121,7 @@ export default function ProfileScreen() {
                                         onPress={confirmJoinAgencyAndSwitch}
                                         loading={isJoiningAgency || isSwitchingRole}
                                         variant="primary"
-                                        style={{ marginTop: 14, width: '100%', backgroundColor: theme.colors.primary }}
+                                        style={{ marginTop: 14, width: '100%', backgroundColor: colors.primary }}
                                         disabled={isJoiningAgency || isSwitchingRole}
                                     />
                                 </View>
@@ -1135,7 +1156,7 @@ export default function ProfileScreen() {
                     ]}
                 >
                     <TouchableOpacity
-                        style={[ss.switchBtn, { backgroundColor: theme.colors.secondary }]}
+                        style={[ss.switchBtn, { backgroundColor: colors.secondary }]}
                         onPress={handleSwitchMode}
                         activeOpacity={0.9}
                     >
@@ -1150,16 +1171,16 @@ export default function ProfileScreen() {
     );
 };
 
-const ss = StyleSheet.create({
+const getStyles = (colors: any) => StyleSheet.create({
     header: {
         position: 'absolute',
         top: 0,
         left: 0,
         right: 0,
         zIndex: 10,
-        backgroundColor: theme.colors.background,
+        backgroundColor: colors.background,
         borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
+        borderBottomColor: colors.divider,
     },
     topBar: {
         flexDirection: 'row',
@@ -1181,7 +1202,7 @@ const ss = StyleSheet.create({
         height: 60,
         borderRadius: 30,
         borderWidth: 2,
-        borderColor: theme.colors.primary,
+        borderColor: colors.primary,
     },
     verifiedBadge: {
         position: 'absolute',
@@ -1203,7 +1224,7 @@ const ss = StyleSheet.create({
         width: 20,
         height: 20,
         borderRadius: 10,
-        backgroundColor: theme.colors.primary,
+        backgroundColor: colors.primary,
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1.5,
@@ -1212,12 +1233,12 @@ const ss = StyleSheet.create({
     userName: {
         fontSize: 15,
         fontWeight: '900',
-        color: theme.colors.text,
+        color: colors.text,
         letterSpacing: -0.2,
     },
     userBio: {
         fontSize: 11,
-        color: theme.colors.muted,
+        color: colors.muted,
         marginTop: 2,
         fontWeight: '500',
         maxWidth: 220,
@@ -1225,7 +1246,7 @@ const ss = StyleSheet.create({
     },
     userEmail: {
         fontSize: 11,
-        color: theme.colors.muted,
+        color: colors.muted,
         marginTop: 2,
         fontWeight: '500',
     },
@@ -1238,7 +1259,7 @@ const ss = StyleSheet.create({
     },
     roleText: {
         fontSize: 9,
-        color: theme.colors.primary,
+        color: colors.primary,
         fontWeight: '700',
     },
     tabBar: {
@@ -1259,33 +1280,33 @@ const ss = StyleSheet.create({
         bottom: 0,
         width: 32,
         height: 2.5,
-        backgroundColor: theme.colors.primary,
+        backgroundColor: colors.primary,
         borderRadius: 2,
     },
     sectionLabel: {
         fontSize: 10,
         fontWeight: '800',
-        color: theme.colors.muted,
+        color: colors.muted,
         letterSpacing: 1.2,
         marginBottom: 8,
         marginTop: 18,
         paddingHorizontal: 4,
     },
     card: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: colors.surface,
         borderRadius: theme.borderRadius.lg,
         overflow: 'hidden',
         borderWidth: 1,
-        borderColor: theme.colors.border,
+        borderColor: colors.border,
     },
     emptyCard: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: colors.surface,
         borderRadius: theme.borderRadius.lg,
         padding: 32,
         alignItems: 'center',
         marginTop: 24,
         borderWidth: 1,
-        borderColor: theme.colors.border,
+        borderColor: colors.border,
     },
     emptyIcon: {
         width: 70,
@@ -1299,12 +1320,12 @@ const ss = StyleSheet.create({
     emptyTitle: {
         fontSize: 16,
         fontWeight: '800',
-        color: theme.colors.text,
+        color: colors.text,
         marginBottom: 6,
     },
     emptyText: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: colors.textSecondary,
         textAlign: 'center',
         lineHeight: 19,
     },
@@ -1320,7 +1341,7 @@ const ss = StyleSheet.create({
         padding: 30,
     },
     modalContent: {
-        backgroundColor: theme.colors.background,
+        backgroundColor: colors.background,
         borderRadius: 24,
         padding: 24,
         alignItems: 'center',
@@ -1335,7 +1356,7 @@ const ss = StyleSheet.create({
         marginBottom: 16,
     },
     modalSheet: {
-        backgroundColor: theme.colors.background,
+        backgroundColor: colors.background,
         borderTopLeftRadius: 32,
         borderTopRightRadius: 32,
         padding: 24,
@@ -1345,7 +1366,7 @@ const ss = StyleSheet.create({
         width: 36,
         height: 4,
         borderRadius: 2,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: colors.divider,
         marginBottom: 16,
     },
     modalClose: {
@@ -1356,12 +1377,12 @@ const ss = StyleSheet.create({
     modalTitle: {
         fontSize: 17,
         fontWeight: '800',
-        color: theme.colors.text,
+        color: colors.text,
         marginBottom: 6,
     },
     modalSub: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: colors.textSecondary,
         textAlign: 'center',
         marginBottom: 20,
     },
@@ -1379,7 +1400,7 @@ const ss = StyleSheet.create({
     },
     qrPendingText: {
         fontSize: 11,
-        color: theme.colors.muted,
+        color: colors.muted,
         marginTop: 12,
         fontWeight: '600',
     },
@@ -1392,7 +1413,7 @@ const ss = StyleSheet.create({
     idText: {
         fontSize: 15,
         fontWeight: '900',
-        color: theme.colors.primary,
+        color: colors.primary,
     },
     floatBtn: {
         position: 'absolute',
@@ -1421,7 +1442,7 @@ const ss = StyleSheet.create({
     sheetTitle: {
         fontSize: 16,
         fontWeight: '800',
-        color: theme.colors.text,
+        color: colors.text,
         marginBottom: 8,
     },
     sheetDesc: {
@@ -1429,7 +1450,7 @@ const ss = StyleSheet.create({
         textAlign: 'center',
         lineHeight: 19,
         fontWeight: '800',
-        color: theme.colors.muted,
+        color: colors.muted,
         letterSpacing: 0.8,
         marginBottom: 8,
         textTransform: 'uppercase',
@@ -1437,7 +1458,7 @@ const ss = StyleSheet.create({
     inputLabel: {
         fontSize: 11,
         fontWeight: '800',
-        color: theme.colors.muted,
+        color: colors.muted,
         letterSpacing: 0.8,
         marginBottom: 8,
         textTransform: 'uppercase',
@@ -1447,10 +1468,10 @@ const ss = StyleSheet.create({
         height: 120,
         borderRadius: 16,
         padding: 16,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: colors.surface,
         borderWidth: 1.5,
-        borderColor: theme.colors.border,
-        color: theme.colors.text,
+        borderColor: colors.border,
+        color: colors.text,
         fontSize: 14,
         textAlignVertical: 'top',
         marginBottom: 20,
@@ -1459,7 +1480,7 @@ const ss = StyleSheet.create({
         width: 60,
         height: 60,
         borderRadius: 30,
-        backgroundColor: theme.colors.primary + '15',
+        backgroundColor: colors.primary + '15',
         alignItems: 'center',
         justifyContent: 'center',
         marginBottom: 20,
@@ -1482,7 +1503,7 @@ const ss = StyleSheet.create({
     agreeRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: colors.surface,
         borderWidth: 1.5,
         borderRadius: 16,
         padding: 14,
@@ -1500,58 +1521,57 @@ const ss = StyleSheet.create({
     agreeText: {
         flex: 1,
         fontSize: 13,
-        color: theme.colors.text,
+        color: colors.text,
         fontWeight: '600',
         lineHeight: 18,
     },
     searchFAQContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: colors.surface,
         borderRadius: 12,
         paddingHorizontal: 12,
         height: 44,
         marginBottom: 20,
         width: '100%',
         borderWidth: 1,
-        borderColor: theme.colors.border,
+        borderColor: colors.border,
     },
     modalInput: {
         width: '100%',
         height: 52,
         borderRadius: 16,
         paddingHorizontal: 16,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: colors.surface,
         borderWidth: 1.5,
-        borderColor: theme.colors.border,
-        color: theme.colors.text,
+        borderColor: colors.border,
+        color: colors.text,
         fontSize: 14,
         marginTop: 8,
     },
     searchFAQInput: {
-
         flex: 1,
         marginLeft: 10,
         fontSize: 14,
-        color: theme.colors.text,
+        color: colors.text,
     },
     faqItem: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: colors.surface,
         borderRadius: 16,
         padding: 16,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: theme.colors.border,
+        borderColor: colors.border,
     },
     faqQ: {
         fontSize: 14,
         fontWeight: '800',
-        color: theme.colors.text,
+        color: colors.text,
         marginBottom: 4,
     },
     faqA: {
         fontSize: 13,
-        color: theme.colors.muted,
+        color: colors.muted,
         lineHeight: 18,
     },
     versionContainer: {
@@ -1560,7 +1580,7 @@ const ss = StyleSheet.create({
     },
     versionText: {
         fontSize: 12,
-        color: theme.colors.muted,
+        color: colors.muted,
         fontWeight: '600',
     },
 });

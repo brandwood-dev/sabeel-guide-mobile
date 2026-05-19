@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { theme } from '@/theme';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { Button } from '@/components/common/Button';
 import { Camera, CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
@@ -71,6 +72,8 @@ type RequestItem = {
 const initialRequests: RequestItem[] = [];
 
 const UmrahScreen = () => {
+    const colors = useThemeColors() as any;
+    const isDarkMode = useIsDarkMode();
     const router = useRouter();
     const { userMode, user } = useUser();
     const { addGroupChat } = useChat();
@@ -635,27 +638,27 @@ const UmrahScreen = () => {
     };
 
     const renderPilgrimCard = ({ item }: { item: any }) => (
-        <TouchableOpacity style={styles.card} onPress={() => openProfile(item)}>
+        <TouchableOpacity style={[styles.card, { backgroundColor: colors.surface }]} onPress={() => openProfile(item)}>
             <Image
                 source={{
                     uri:
                         getUserAvatarUrl(item.photo) ||
-                        `https://ui-avatars.com/api/?name=${encodeURIComponent(item.name || 'User')}&background=2C5F2D&color=fff`,
+                        `https://ui-avatars.com/api/?name=${encodeURIComponent(item.name || 'User')}&background=3A7D44&color=fff`,
                 }}
                 style={styles.cardImage}
             />
             <View style={styles.cardInfo}>
                 <View style={styles.cardHeaderRow}>
-                    <Text style={[styles.cardName, { flex: 1 }]} numberOfLines={1}>{item.name}</Text>
+                    <Text style={[styles.cardName, { color: colors.text, flex: 1 }]} numberOfLines={1}>{item.name}</Text>
                     {item.group && (
-                        <View style={[styles.groupBadge, { maxWidth: '40%' }]}>
-                            <Text style={styles.groupBadgeText} numberOfLines={1}>{item.group}</Text>
+                        <View style={[styles.groupBadge, { backgroundColor: isDarkMode ? 'rgba(76, 175, 80, 0.15)' : '#E8F5E9', maxWidth: '40%' }]}>
+                            <Text style={[styles.groupBadgeText, { color: colors.primary }]} numberOfLines={1}>{item.group}</Text>
                         </View>
                     )}
                 </View>
                 <View style={styles.detailRow}>
-                    <MaterialCommunityIcons name="passport" size={14} color={theme.colors.muted} />
-                    <Text style={styles.cardSub}> {item.passport}</Text>
+                    <MaterialCommunityIcons name="passport" size={14} color={colors.textSecondary} />
+                    <Text style={[styles.cardSub, { color: colors.textSecondary }]}> {item.passport}</Text>
                 </View>
             </View>
         </TouchableOpacity>
@@ -663,7 +666,7 @@ const UmrahScreen = () => {
 
     const renderGroupCard = ({ item }: { item: any }) => (
         <TouchableOpacity
-            style={styles.card}
+            style={[styles.card, { backgroundColor: colors.surface }]}
             onPress={() => {
                 // Navigate to group detail screen
                 router.push({
@@ -680,22 +683,22 @@ const UmrahScreen = () => {
                 });
             }}
         >
-            <View style={[styles.groupIcon, { backgroundColor: theme.colors.primary + '20' }]}>
-                <MaterialCommunityIcons name="account-group" size={30} color={theme.colors.primary} />
+            <View style={[styles.groupIcon, { backgroundColor: isDarkMode ? 'rgba(58, 125, 68, 0.15)' : theme.colors.primary + '20' }]}>
+                <MaterialCommunityIcons name="account-group" size={30} color={colors.primary} />
             </View>
             <View style={styles.cardInfo}>
-                <Text style={styles.cardName}>{item.name}</Text>
-                <Text style={styles.cardSub}>{item.city} • {item.date}</Text>
+                <Text style={[styles.cardName, { color: colors.text }]}>{item.name}</Text>
+                <Text style={[styles.cardSub, { color: colors.textSecondary }]}>{item.city} • {item.date}</Text>
                 <View style={styles.progressContainer}>
-                    <View style={styles.progressBar}>
+                    <View style={[styles.progressBar, { backgroundColor: isDarkMode ? '#2E3B56' : '#F0F0F0' }]}>
                         <View
                             style={[
                                 styles.progressFill,
-                                { width: `${item.max ? (item.count / item.max) * 100 : 0}%` },
+                                { backgroundColor: colors.primary, width: `${item.max ? (item.count / item.max) * 100 : 0}%` },
                             ]}
                         />
                     </View>
-                    <Text style={styles.progressText}>{item.count}/{item.max} Pilgrims</Text>
+                    <Text style={[styles.progressText, { color: colors.textSecondary }]}>{item.count}/{item.max} Pilgrims</Text>
                 </View>
             </View>
             {canManageGroups ? (
@@ -717,50 +720,50 @@ const UmrahScreen = () => {
                         );
                     }}
                 >
-                    <Ionicons name="ellipsis-vertical" size={18} color={theme.colors.muted} />
+                    <Ionicons name="ellipsis-vertical" size={18} color={colors.textSecondary} />
                 </TouchableOpacity>
             ) : (
                 <View style={styles.chevronButton}>
-                    <Ionicons name="chevron-forward" size={20} color={theme.colors.muted} />
+                    <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
                 </View>
             )}
         </TouchableOpacity>
     );
 
     const renderRequestCard = ({ item }: { item: typeof initialRequests[0] }) => (
-        <View style={styles.requestCard}>
+        <View style={[styles.requestCard, { backgroundColor: colors.surface }]}>
             <View style={styles.requestMain}>
                 <Image
                     source={{
                         uri:
                             item.photo ||
-                            `https://ui-avatars.com/api/?name=${encodeURIComponent(item.name || 'User')}&background=2C5F2D&color=fff`,
+                            `https://ui-avatars.com/api/?name=${encodeURIComponent(item.name || 'User')}&background=3A7D44&color=fff`,
                     }}
                     style={styles.cardImage}
                 />
                 <View style={styles.cardInfo}>
                     <View style={styles.requestHeader}>
-                        <Text style={styles.cardName}>{item.name}</Text>
-                        <View style={styles.badgeNew}>
+                        <Text style={[styles.cardName, { color: colors.text }]}>{item.name}</Text>
+                        <View style={[styles.badgeNew, { backgroundColor: colors.primary }]}>
                             <Text style={styles.badgeNewText}>New</Text>
                         </View>
                     </View>
-                    <Text style={styles.packetText}>{item.type}</Text>
+                    <Text style={[styles.packetText, { color: colors.text }]}>{item.type}</Text>
                     <View style={styles.dateRow}>
-                        <Ionicons name="calendar-outline" size={14} color={theme.colors.muted} />
-                        <Text style={styles.dateText}>{item.date}</Text>
+                        <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
+                        <Text style={[styles.dateText, { color: colors.textSecondary }]}>{item.date}</Text>
                     </View>
                 </View>
             </View>
             <View style={styles.requestActions}>
                 <TouchableOpacity
-                    style={[styles.requestActionBtn, styles.rejectBtn]}
+                    style={[styles.requestActionBtn, styles.rejectBtn, { backgroundColor: isDarkMode ? '#2E3B56' : '#F1F3F5' }]}
                     onPress={() => handleRejectRequest(item.id)}
                 >
-                    <Text style={[styles.btnText, styles.rejectText]}>Decline</Text>
+                    <Text style={[styles.btnText, styles.rejectText, { color: colors.textSecondary }]}>Decline</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                    style={[styles.requestActionBtn, styles.acceptBtn]}
+                    style={[styles.requestActionBtn, styles.acceptBtn, { backgroundColor: colors.primary }]}
                     onPress={() => handleAcceptRequest(item.id)}
                 >
                     <Text style={[styles.btnText, styles.acceptText]}>Accept</Text>
@@ -777,29 +780,30 @@ const UmrahScreen = () => {
     });
 
     return (
-        <SafeAreaView style={styles.container}>
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
             {/* Top App Bar */}
-            <View style={styles.appBar}>
-                <Text style={styles.headerTitle}>Gestion Umrah</Text>
+            <View style={[styles.appBar, { backgroundColor: colors.surface, borderBottomColor: colors.divider }]}>
+                <Text style={[styles.headerTitle, { color: colors.text }]}>Gestion Umrah</Text>
                 <View style={styles.headerIcons}>
                     {canManageGroups && (
                         <TouchableOpacity style={styles.headerBtn} onPress={() => setCreateModalVisible(true)}>
-                            <Ionicons name="add" size={26} color={theme.colors.secondary} />
+                            <Ionicons name="add" size={26} color={colors.text} />
                         </TouchableOpacity>
                     )}
                     <TouchableOpacity style={styles.headerBtn} onPress={handleOpenScanner}>
-                        <MaterialCommunityIcons name="qrcode-scan" size={20} color={theme.colors.secondary} />
+                        <MaterialCommunityIcons name="qrcode-scan" size={20} color={colors.text} />
                     </TouchableOpacity>
                 </View>
             </View>
 
             {/* Search Bar */}
-            <View style={styles.searchWrapper}>
-                <View style={styles.searchBarContainer}>
-                    <Ionicons name="search-outline" size={20} color={theme.colors.muted} />
+            <View style={[styles.searchWrapper, { backgroundColor: colors.surface }]}>
+                <View style={[styles.searchBarContainer, { backgroundColor: isDarkMode ? '#121824' : '#F8F9FA', borderColor: colors.border }]}>
+                    <Ionicons name="search-outline" size={20} color={colors.textSecondary} />
                     <TextInput
-                        style={styles.searchInput}
+                        style={[styles.searchInput, { color: colors.text }]}
                         placeholder="Search name, ID, group..."
+                        placeholderTextColor={colors.textSecondary}
                         value={searchQuery}
                         onChangeText={setSearchQuery}
                     />
@@ -807,7 +811,7 @@ const UmrahScreen = () => {
             </View>
 
             {/* Circular Filter Navigation (Replacing old Tabs) */}
-            <View style={styles.filterWrapper}>
+            <View style={[styles.filterWrapper, { backgroundColor: colors.background }]}>
                 <ScrollView
                     horizontal
                     showsHorizontalScrollIndicator={false}
@@ -817,10 +821,10 @@ const UmrahScreen = () => {
                     {(userMode === 'guide' ? ['Pilgrims', 'Groups', 'Requests'] : ['Pilgrims', 'Groups']).map((filter) => (
                         <TouchableOpacity
                             key={filter}
-                            style={[styles.filterChip, activeTab === filter && styles.activeFilterChip]}
+                            style={[styles.filterChip, { backgroundColor: isDarkMode ? '#1E2638' : '#F1F3F5', borderColor: isDarkMode ? '#2E3B56' : '#E9ECEF' }, activeTab === filter && [styles.activeFilterChip, { backgroundColor: colors.primary, borderColor: colors.primary }]]}
                             onPress={() => setActiveTab(filter)}
                         >
-                            <Text style={[styles.filterChipText, activeTab === filter && styles.activeFilterChipText]}>
+                            <Text style={[styles.filterChipText, { color: colors.textSecondary }, activeTab === filter && [styles.activeFilterChipText, { color: '#fff' }]]}>
                                 {filter}
                             </Text>
                             {filter === 'Requests' && requests.length > 0 && (
@@ -861,8 +865,8 @@ const UmrahScreen = () => {
                         showsVerticalScrollIndicator={false}
                         ListEmptyComponent={
                             <View style={styles.emptyState}>
-                                <MaterialCommunityIcons name="email-open-outline" size={80} color={theme.colors.border} />
-                                <Text style={styles.emptyText}>No pending requests</Text>
+                                <MaterialCommunityIcons name="email-open-outline" size={80} color={colors.textSecondary} />
+                                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No pending requests</Text>
                             </View>
                         }
                     />
@@ -880,20 +884,20 @@ const UmrahScreen = () => {
                     style={styles.deleteModalOverlay}
                     onPress={() => setDeleteGroupModalVisible(false)}
                 />
-                <View style={styles.deleteModalSheet}>
-                    <Text style={styles.deleteModalTitle}>Supprimer le groupe</Text>
-                    <Text style={styles.deleteModalText} numberOfLines={2}>
+                <View style={[styles.deleteModalSheet, { backgroundColor: colors.surface }]}>
+                    <Text style={[styles.deleteModalTitle, { color: colors.text }]}>Supprimer le groupe</Text>
+                    <Text style={[styles.deleteModalText, { color: colors.textSecondary }]} numberOfLines={2}>
                         {groupToDelete?.name || 'Groupe'}
                     </Text>
                     <View style={styles.deleteModalActions}>
                         <TouchableOpacity
-                            style={[styles.deleteModalBtn, styles.deleteModalCancelBtn]}
+                            style={[styles.deleteModalBtn, styles.deleteModalCancelBtn, { backgroundColor: isDarkMode ? '#2E3B56' : '#F3F4F6' }]}
                             onPress={() => setDeleteGroupModalVisible(false)}
                         >
-                            <Text style={styles.deleteModalCancelText}>Annuler</Text>
+                            <Text style={[styles.deleteModalCancelText, { color: colors.text }]}>Annuler</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                            style={[styles.deleteModalBtn, styles.deleteModalConfirmBtn]}
+                            style={[styles.deleteModalBtn, styles.deleteModalConfirmBtn, { backgroundColor: '#EF4444' }]}
                             onPress={async () => {
                                 const gid = groupToDelete?.id;
                                 setDeleteGroupModalVisible(false);
@@ -912,30 +916,30 @@ const UmrahScreen = () => {
                 visible={createModalVisible}
                 animationType="fade"
             >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
+                <View style={[styles.modalOverlay, { backgroundColor: isDarkMode ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.5)' }]}>
+                    <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
                         <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Create New Group</Text>
+                            <Text style={[styles.modalTitle, { color: colors.text }]}>Create New Group</Text>
                             <TouchableOpacity
                                 onPress={() => {
                                     if (isCreatingGroup) return;
                                     setCreateModalVisible(false);
                                 }}
                             >
-                                <Ionicons name="close" size={24} color={theme.colors.secondary} />
+                                <Ionicons name="close" size={24} color={colors.textSecondary} />
                             </TouchableOpacity>
                         </View>
 
-                        <ScrollView style={styles.modalForm}>
+                        <ScrollView style={styles.modalForm} showsVerticalScrollIndicator={false}>
                             {/* Group Image Picker */}
                             <View style={[styles.inputGroup, { marginBottom: 15 }]}>
-                                <Text style={styles.label}>Group Image</Text>
+                                <Text style={[styles.label, { color: colors.text }]}>Group Image</Text>
                                 <View style={styles.imagePickerContainer}>
                                     {newGroupImage ? (
                                         <View style={styles.imagePreviewContainer}>
-                                            <Image source={{ uri: newGroupImage }} style={styles.groupImagePreview} />
+                                            <Image source={{ uri: newGroupImage }} style={[styles.groupImagePreview, { backgroundColor: isDarkMode ? '#121824' : '#f1f1f1' }]} />
                                             <TouchableOpacity
-                                                style={styles.removeImageBtn}
+                                                style={[styles.removeImageBtn, { backgroundColor: colors.surface }]}
                                                 onPress={() => setNewGroupImage(null)}
                                             >
                                                 <Ionicons name="close-circle" size={24} color="#F44336" />
@@ -944,11 +948,11 @@ const UmrahScreen = () => {
                                     ) : (
                                         <View style={styles.imagePickerButtons}>
                                             <TouchableOpacity
-                                                style={[styles.imagePickerBtn, { padding: 12 }]}
+                                                style={[styles.imagePickerBtn, { backgroundColor: isDarkMode ? 'rgba(58, 125, 68, 0.08)' : '#F0F7F2', borderColor: isDarkMode ? 'rgba(58, 125, 68, 0.25)' : theme.colors.primary + '30', padding: 12 }]}
                                                 onPress={handlePickGroupImage}
                                             >
-                                                <MaterialCommunityIcons name="image" size={24} color={theme.colors.primary} />
-                                                <Text style={[styles.imagePickerText, { fontSize: 12 }]}>Choose from Gallery</Text>
+                                                <MaterialCommunityIcons name="image" size={24} color={colors.primary} />
+                                                <Text style={[styles.imagePickerText, { color: colors.primary, fontSize: 12 }]}>Choose from Gallery</Text>
                                             </TouchableOpacity>
                                         </View>
                                     )}
@@ -956,32 +960,33 @@ const UmrahScreen = () => {
                             </View>
 
                             <View style={styles.inputGroup}>
-                                <Text style={styles.label}>Group Name</Text>
+                                <Text style={[styles.label, { color: colors.text }]}>Group Name</Text>
                                 <TextInput
-                                    style={styles.input}
+                                    style={[styles.input, { backgroundColor: isDarkMode ? '#121824' : '#f8f9fa', borderColor: colors.border, color: colors.text }]}
                                     placeholder="Enter group name"
+                                    placeholderTextColor={colors.textSecondary}
                                     value={newGroupName}
                                     onChangeText={setNewGroupName}
                                 />
                             </View>
 
                             <View style={[styles.inputGroup, { marginTop: 4 }]}>
-                                <Text style={styles.label}>Period</Text>
+                                <Text style={[styles.label, { color: colors.text }]}>Period</Text>
                                 <TouchableOpacity
-                                    style={styles.datePickerButton}
+                                    style={[styles.datePickerButton, { backgroundColor: isDarkMode ? '#121824' : '#f8f9fa', borderColor: colors.border }]}
                                     onPress={() => {
                                         setPickingStep('start');
                                         setShowDatePicker(true);
                                     }}
                                 >
-                                    <MaterialCommunityIcons name="calendar" size={18} color={theme.colors.primary} />
-                                    <Text style={[styles.datePickerText, { fontSize: 13 }]}>
+                                    <MaterialCommunityIcons name="calendar" size={18} color={colors.primary} />
+                                    <Text style={[styles.datePickerText, { color: colors.text, fontSize: 13 }]}>
                                         {newGroupDate || 'Select period'}
                                     </Text>
-                                    <Ionicons name="chevron-down" size={18} color={theme.colors.muted} />
+                                    <Ionicons name="chevron-down" size={18} color={colors.textSecondary} />
                                 </TouchableOpacity>
                                 {showDatePicker && (
-                                    <View style={styles.datePickerWrapper}>
+                                    <View style={[styles.datePickerWrapper, { backgroundColor: colors.surface }]}>
                                         <DateTimePicker
                                             value={selectedDate}
                                             mode="date"
@@ -993,19 +998,21 @@ const UmrahScreen = () => {
                                 )}
                             </View>
                             <View style={styles.inputGroup}>
-                                <Text style={styles.label}>Destination City</Text>
+                                <Text style={[styles.label, { color: colors.text }]}>Destination City</Text>
                                 <TextInput
-                                    style={styles.input}
+                                    style={[styles.input, { backgroundColor: isDarkMode ? '#121824' : '#f8f9fa', borderColor: colors.border, color: colors.text }]}
                                     placeholder="Makkah or Madinah"
+                                    placeholderTextColor={colors.textSecondary}
                                     value={newGroupCity}
                                     onChangeText={setNewGroupCity}
                                 />
                             </View>
                             <View style={styles.inputGroup}>
-                                <Text style={styles.label}>Max Pilgrims</Text>
+                                <Text style={[styles.label, { color: colors.text }]}>Max Pilgrims</Text>
                                 <TextInput
-                                    style={styles.input}
+                                    style={[styles.input, { backgroundColor: isDarkMode ? '#121824' : '#f8f9fa', borderColor: colors.border, color: colors.text }]}
                                     placeholder="20"
+                                    placeholderTextColor={colors.textSecondary}
                                     value={newGroupMax}
                                     onChangeText={setNewGroupMax}
                                     keyboardType="numeric"
@@ -1015,7 +1022,7 @@ const UmrahScreen = () => {
                             <Button
                                 title={isCreatingGroup ? 'Création...' : 'Create Group'}
                                 onPress={handleCreateGroup}
-                                style={styles.createBtn}
+                                style={[styles.createBtn, { backgroundColor: colors.primary }]}
                                 disabled={isCreatingGroup}
                             />
                         </ScrollView>

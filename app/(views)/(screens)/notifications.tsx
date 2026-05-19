@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/theme';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { useRouter } from 'expo-router';
 import { useUser } from '@/context/UserContext';
 import { notificationService, InAppNotification } from '@/services/notificationService';
@@ -37,6 +38,8 @@ type UiNotification = {
 };
 
 const NotificationScreen = () => {
+    const colors = useThemeColors() as any;
+    const isDarkMode = useIsDarkMode();
     const router = useRouter();
     const { user, userMode } = useUser();
     const isAgencyRole = String((user as any)?.activeRole || '') === 'agency' || userMode === 'agency';
@@ -104,8 +107,8 @@ const NotificationScreen = () => {
 
     const visibleNotifications = useMemo(() => {
         const list = Array.isArray(notifications) ? notifications : [];
-        return isAgencyRole ? list.filter((n) => n.type !== 'wallet' && n.type !== 'document') : list;
-    }, [isAgencyRole, notifications]);
+        return list;
+    }, [notifications]);
 
     const markAsRead = async (id: string) => {
         setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
@@ -120,12 +123,12 @@ const NotificationScreen = () => {
 
     const getIcon = (type: string) => {
         switch (type) {
-            case 'message': return { name: 'chatbubble-ellipses', color: '#4CAF50', bg: '#E8F5E9' };
-            case 'alert': return { name: 'warning', color: '#F44336', bg: '#FFEBEE' };
-            case 'pilgrim': return { name: 'person-add', color: theme.colors.primary, bg: theme.colors.primary + '15' };
-            case 'wallet': return { name: 'wallet', color: '#FF9800', bg: '#FFF3E0' };
-            case 'document': return { name: 'document-text', color: '#2196F3', bg: '#E3F2FD' };
-            default: return { name: 'notifications', color: theme.colors.muted, bg: '#F5F5F5' };
+            case 'message': return { name: 'chatbubble-ellipses', color: '#4CAF50', bg: isDarkMode ? 'rgba(76, 175, 80, 0.15)' : '#E8F5E9' };
+            case 'alert': return { name: 'warning', color: '#F44336', bg: isDarkMode ? 'rgba(244, 67, 54, 0.15)' : '#FFEBEE' };
+            case 'pilgrim': return { name: 'person-add', color: colors.primary, bg: isDarkMode ? 'rgba(58, 125, 68, 0.15)' : colors.primary + '15' };
+            case 'wallet': return { name: 'wallet', color: '#FF9800', bg: isDarkMode ? 'rgba(255, 152, 0, 0.15)' : '#FFF3E0' };
+            case 'document': return { name: 'document-text', color: '#2196F3', bg: isDarkMode ? 'rgba(33, 150, 243, 0.15)' : '#E3F2FD' };
+            default: return { name: 'notifications', color: colors.textSecondary, bg: isDarkMode ? '#2E3B56' : '#F5F5F5' };
         }
     };
 
@@ -133,7 +136,7 @@ const NotificationScreen = () => {
         const iconConfig = getIcon(item.type);
         return (
             <TouchableOpacity
-                style={[styles.notifCard, !item.read && styles.notifCardUnread]}
+                style={[styles.notifCard, { backgroundColor: colors.surface, borderColor: colors.border }, !item.read && [styles.notifCardUnread, { backgroundColor: isDarkMode ? 'rgba(58, 125, 68, 0.08)' : '#F8FBF9', borderColor: colors.primary + '30' }]]}
                 onPress={() => markAsRead(item.id)}
             >
                 <View style={[styles.iconContainer, { backgroundColor: iconConfig.bg }]}>
@@ -141,25 +144,25 @@ const NotificationScreen = () => {
                 </View>
                 <View style={styles.notifMain}>
                     <View style={styles.notifHeader}>
-                        <Text style={[styles.notifTitle, !item.read && styles.textBold]}>{item.title}</Text>
-                        <Text style={styles.notifTime}>{item.time}</Text>
+                        <Text style={[styles.notifTitle, { color: colors.text }, !item.read && styles.textBold]}>{item.title}</Text>
+                        <Text style={[styles.notifTime, { color: colors.textSecondary }]}>{item.time}</Text>
                     </View>
-                    <Text style={styles.notifDesc} numberOfLines={2}>{item.description}</Text>
+                    <Text style={[styles.notifDesc, { color: colors.textSecondary }]} numberOfLines={2}>{item.description}</Text>
                 </View>
-                {!item.read && <View style={styles.unreadDot} />}
+                {!item.read && <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />}
             </TouchableOpacity>
         );
     };
 
     return (
-        <SafeAreaView style={styles.safeArea}>
-            <StatusBar barStyle="dark-content" />
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
 
-            <View style={styles.header}>
+            <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                    <Ionicons name="arrow-back" size={24} color={theme.colors.secondary} />
+                    <Ionicons name="arrow-back" size={24} color={colors.text} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Notifications</Text>
+                <Text style={[styles.headerTitle, { color: colors.text }]}>Notifications</Text>
                 <TouchableOpacity
                     onPress={async () => {
                         setNotifications(prev => prev.map(n => ({ ...n, read: true })));
@@ -170,17 +173,17 @@ const NotificationScreen = () => {
                         }
                     }}
                 >
-                    <Text style={styles.markAll}>Tout lire</Text>
+                    <Text style={[styles.markAll, { color: colors.primary }]}>Tout lire</Text>
                 </TouchableOpacity>
             </View>
 
             <View style={styles.actionsRow}>
                 <TouchableOpacity
                     onPress={fetchInbox}
-                    style={styles.actionBtn}
+                    style={[styles.actionBtn, { backgroundColor: isDarkMode ? '#1E2638' : '#F7F9FC', borderColor: colors.border }]}
                     activeOpacity={0.8}
                 >
-                    <Text style={styles.actionText}>Actualiser</Text>
+                    <Text style={[styles.actionText, { color: colors.text }]}>Actualiser</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                     onPress={async () => {
@@ -191,7 +194,7 @@ const NotificationScreen = () => {
                             // ignore
                         }
                     }}
-                    style={[styles.actionBtn, styles.actionDanger]}
+                    style={[styles.actionBtn, styles.actionDanger, isDarkMode && { backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.3)' }]}
                     activeOpacity={0.8}
                 >
                     <Text style={[styles.actionText, styles.actionDangerText]}>Tout supprimer</Text>
@@ -209,8 +212,8 @@ const NotificationScreen = () => {
                 }
                 ListEmptyComponent={
                     <View style={styles.emptyState}>
-                        <Ionicons name="notifications-off-outline" size={80} color={theme.colors.border} />
-                        <Text style={styles.emptyText}>Aucune notification pour le moment</Text>
+                        <Ionicons name="notifications-off-outline" size={80} color={colors.border} />
+                        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Aucune notification pour le moment</Text>
                     </View>
                 }
             />

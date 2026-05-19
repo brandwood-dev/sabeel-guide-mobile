@@ -19,6 +19,7 @@ import { createMessagingSocket } from '@/services/messagingSocket';
 import { messagingApi } from '@/services/api';
 import { theme } from '@/theme';
 import { getUserAvatarUrl } from '@/services/media';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 
 type ConversationItem = {
     id: string;
@@ -39,6 +40,8 @@ const dedupeConversationsById = (items: ConversationItem[]) => {
 };
 
 export default function ArchiveScreen() {
+    const colors = useThemeColors() as any;
+    const isDarkMode = useIsDarkMode();
     const router = useRouter();
     const [searchQuery, setSearchQuery] = useState('');
     const [conversations, setConversations] = useState<ConversationItem[]>([]);
@@ -192,29 +195,29 @@ export default function ArchiveScreen() {
 
     const renderItem = ({ item }: { item: ConversationItem }) => (
         <Swipeable renderRightActions={() => renderRightActions(String(item.id))}>
-            <TouchableOpacity style={styles.chatCard} onPress={() => openConversation(item)}>
+            <TouchableOpacity style={[styles.chatCard, { backgroundColor: colors.surface }]} onPress={() => openConversation(item)}>
                 <View style={styles.photoContainer}>
                     <Image
                         source={{
                             uri:
                                 getUserAvatarUrl(item.imageUrl) ||
-                                `https://ui-avatars.com/api/?name=${encodeURIComponent(item.displayName || 'User')}&background=2C5F2D&color=fff`,
+                                `https://ui-avatars.com/api/?name=${encodeURIComponent(item.displayName || 'User')}&background=3A7D44&color=fff`,
                         }}
-                        style={styles.chatPhoto}
+                        style={[styles.chatPhoto, { backgroundColor: isDarkMode ? '#121824' : '#F1F3F5' }]}
                     />
                 </View>
                 <View style={styles.chatDetails}>
                     <View style={styles.chatHeader}>
-                        <Text style={styles.chatName} numberOfLines={1}>{item.displayName}</Text>
-                        <Text style={styles.chatTime}>{item.lastMessageAt || ''}</Text>
+                        <Text style={[styles.chatName, { color: colors.text }]} numberOfLines={1}>{item.displayName}</Text>
+                        <Text style={[styles.chatTime, { color: colors.textSecondary }]}>{item.lastMessageAt || ''}</Text>
                     </View>
                     {item.roleLabel ? (
-                        <Text style={styles.chatRole} numberOfLines={1}>
+                        <Text style={[styles.chatRole, { color: colors.textSecondary }]} numberOfLines={1}>
                             {item.roleLabel}
                         </Text>
                     ) : null}
                     <View style={styles.chatFooter}>
-                        <Text style={styles.lastMessage} numberOfLines={1}>
+                        <Text style={[styles.lastMessage, { color: colors.textSecondary }]} numberOfLines={1}>
                             {item.lastMessageText || 'Discussion'}
                         </Text>
                     </View>
@@ -224,23 +227,24 @@ export default function ArchiveScreen() {
     );
 
     return (
-        <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="dark-content" />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
             <View style={styles.inboxContainer}>
-                <View style={styles.topHeader}>
+                <View style={[styles.topHeader, { borderBottomWidth: 1, borderBottomColor: colors.divider, paddingVertical: 14 }]}>
                     <TouchableOpacity style={styles.headerActionButton} onPress={() => router.back()}>
-                        <Ionicons name="arrow-back" size={22} color={theme.colors.secondary} />
+                        <Ionicons name="arrow-back" size={22} color={colors.text} />
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle}>Archives</Text>
+                    <Text style={[styles.headerTitle, { color: colors.text }]}>Archives</Text>
                     <View style={styles.headerActionButton} />
                 </View>
 
-                <View style={styles.searchWrapper}>
-                    <View style={styles.searchBar}>
-                        <Ionicons name="search-outline" size={20} color={theme.colors.muted} />
+                <View style={[styles.searchWrapper, { backgroundColor: colors.surface, paddingVertical: 10, marginBottom: 0 }]}>
+                    <View style={[styles.searchBar, { backgroundColor: isDarkMode ? '#121824' : '#F8F9FA', borderColor: colors.border }]}>
+                        <Ionicons name="search-outline" size={20} color={colors.textSecondary} />
                         <TextInput
-                            style={styles.searchInput}
+                            style={[styles.searchInput, { color: colors.text }]}
                             placeholder="Rechercher une discussion archivée..."
+                            placeholderTextColor={colors.textSecondary}
                             value={searchQuery}
                             onChangeText={setSearchQuery}
                         />
@@ -257,8 +261,8 @@ export default function ArchiveScreen() {
                     onRefresh={() => {}}
                     ListEmptyComponent={!loading ? (
                         <View style={styles.emptyContainer}>
-                            <Ionicons name="archive-outline" size={64} color={theme.colors.muted} />
-                            <Text style={styles.emptyText}>Aucune discussion archivée</Text>
+                            <Ionicons name="archive-outline" size={64} color={colors.textSecondary} />
+                            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Aucune discussion archivée</Text>
                         </View>
                     ) : null}
                 />

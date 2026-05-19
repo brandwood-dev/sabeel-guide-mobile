@@ -63,7 +63,7 @@ const SplashAgency = () => {
                 setUserMode(targetMode as 'guide' | 'agency');
             }
             // Navigate back to home or profile
-            router.replace('/home');
+            router.replace('/(views)/(tabs)/home' as any);
         }, 2500);
 
         return () => clearTimeout(timer);

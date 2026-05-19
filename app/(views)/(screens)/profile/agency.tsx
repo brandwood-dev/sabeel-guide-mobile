@@ -4,14 +4,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useThemeColors } from '@/hooks/useThemeColors';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import api from '@/services/api';
 import { useUser } from '@/context/UserContext';
 
 export default function AgencyPage() {
     const router = useRouter();
     const colors = useThemeColors() as any;
-    const isDarkMode = false;
+    const isDarkMode = useIsDarkMode();
     const { user, agencyId } = useUser();
 
     const PAGE_BG = isDarkMode ? '#111111' : '#F4F5F7';

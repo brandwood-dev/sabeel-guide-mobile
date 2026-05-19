@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/theme';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { walletApi } from '@/services/api';
 import { TransactionDetailsSheet } from '@/components/modals/TransactionDetailsSheet';
 
@@ -35,8 +36,9 @@ type Tx = {
 
 const formatMoney = (amountCents?: number, currency?: string) => {
   const amount = typeof amountCents === 'number' ? amountCents : 0;
-  const cur = String(currency || 'MAD').toUpperCase();
-  return `${(amount / 100).toFixed(2)} ${cur}`;
+  const cur = String(currency || 'TND').toUpperCase();
+  const divisor = cur === 'TND' ? 1000 : 100;
+  return `${(amount / divisor).toFixed(2)} ${cur}`;
 };
 
 const formatDate = (value?: string) => {
@@ -58,6 +60,8 @@ const filterLabel = (key: 'all' | 'incoming' | 'withdrawal') => {
 };
 
 export default function WalletHistoryScreen() {
+  const colors = useThemeColors() as any;
+  const isDarkMode = useIsDarkMode();
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -126,23 +130,24 @@ export default function WalletHistoryScreen() {
 
   const renderItem = ({ item }: { item: Tx }) => {
     const incoming = isIncoming(item.type);
+    const txColor = incoming ? colors.primary : (isDarkMode ? '#FF9800' : theme.colors.secondary);
     return (
       <TouchableOpacity
-        style={ss.txItem}
+        style={[ss.txItem, { backgroundColor: colors.surface }]}
         activeOpacity={0.8}
         onPress={() => {
           setSelectedTx(item);
           setDetailsVisible(true);
         }}
       >
-        <View style={[ss.txIconWrap, { backgroundColor: incoming ? 'rgba(44,95,45,0.10)' : 'rgba(217,171,131,0.14)' }]}>
-          <Ionicons name={incoming ? 'arrow-down' : 'arrow-up'} size={18} color={incoming ? theme.colors.primary : theme.colors.secondary} />
+        <View style={[ss.txIconWrap, { backgroundColor: incoming ? 'rgba(76, 175, 80, 0.12)' : 'rgba(255, 152, 0, 0.12)' }]}>
+          <Ionicons name={incoming ? 'arrow-down' : 'arrow-up'} size={18} color={txColor} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={ss.txTitle}>{String(item.type || '').replace(/_/g, ' ')}</Text>
-          <Text style={ss.txSub}>{formatDate(item.createdAt)} · {String(item.status || '').toLowerCase()}</Text>
+          <Text style={[ss.txTitle, { color: colors.text }]}>{String(item.type || '').replace(/_/g, ' ')}</Text>
+          <Text style={[ss.txSub, { color: colors.textSecondary }]}>{formatDate(item.createdAt)} · {String(item.status || '').toLowerCase()}</Text>
         </View>
-        <Text style={[ss.txAmount, { color: incoming ? theme.colors.primary : theme.colors.secondary }]}>
+        <Text style={[ss.txAmount, { color: txColor }]}>
           {incoming ? '+' : '-'} {formatMoney(item.amount, item.currency)}
         </Text>
       </TouchableOpacity>
@@ -150,13 +155,13 @@ export default function WalletHistoryScreen() {
   };
 
   return (
-    <SafeAreaView style={[ss.container, { paddingTop: insets.top }]}
+    <SafeAreaView style={[ss.container, { backgroundColor: colors.background, paddingTop: insets.top }]}
     >
       <View style={ss.header}>
-        <TouchableOpacity onPress={() => router.back()} style={ss.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={theme.colors.secondary} />
+        <TouchableOpacity onPress={() => router.back()} style={[ss.backBtn, { backgroundColor: colors.surface }]}>
+          <Ionicons name="arrow-back" size={22} color={colors.text} />
         </TouchableOpacity>
-        <Text style={ss.headerTitle}>Transaction History</Text>
+        <Text style={[ss.headerTitle, { color: colors.text }]}>Transaction History</Text>
         <View style={{ width: 40 }} />
       </View>
 
@@ -164,19 +169,19 @@ export default function WalletHistoryScreen() {
         {(['all', 'incoming', 'withdrawal'] as const).map((k) => (
           <TouchableOpacity
             key={k}
-            style={[ss.filterPill, filter === k && ss.filterPillActive]}
+            style={[ss.filterPill, { backgroundColor: colors.surface, borderColor: colors.border }, filter === k && [ss.filterPillActive, { backgroundColor: colors.primary, borderColor: colors.primary }]]}
             onPress={() => setFilter(k)}
             activeOpacity={0.85}
           >
-            <Text style={[ss.filterText, filter === k && ss.filterTextActive]}>{filterLabel(k)}</Text>
+            <Text style={[ss.filterText, { color: colors.text }, filter === k && [ss.filterTextActive, { color: '#fff' }]]}>{filterLabel(k)}</Text>
           </TouchableOpacity>
         ))}
       </View>
 
       {loading ? (
         <View style={ss.center}>
-          <ActivityIndicator color={theme.colors.primary} />
-          <Text style={ss.centerText}>Chargement...</Text>
+          <ActivityIndicator color={colors.primary} />
+          <Text style={[ss.centerText, { color: colors.textSecondary }]}>Chargement...</Text>
         </View>
       ) : (
         <FlatList
@@ -192,7 +197,7 @@ export default function WalletHistoryScreen() {
           ListFooterComponent={
             loadingMore ? (
               <View style={{ paddingVertical: 14 }}>
-                <ActivityIndicator color={theme.colors.primary} />
+                <ActivityIndicator color={colors.primary} />
               </View>
             ) : null
           }

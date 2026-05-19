@@ -11,7 +11,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { useThemeColors } from '@/hooks/useThemeColors';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { useTrans } from '@/hooks/useTrans';
 
 function PasswordField({
@@ -41,7 +41,7 @@ function PasswordField({
 export default function ChangePasswordPage() {
     const router = useRouter();
     const colors = useThemeColors() as any;
-    const isDarkMode = false;
+    const isDarkMode = useIsDarkMode();
     const { t } = useTrans();
 
     const PAGE_BG = isDarkMode ? '#111111' : '#F4F5F7';

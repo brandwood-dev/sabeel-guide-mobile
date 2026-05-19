@@ -50,11 +50,6 @@ export default function GuideSplash() {
         <View style={styles.container}>
             <StatusBar style="light" />
             <Animated.View style={[styles.content, { opacity: fadeAnim, transform: [{ scale: scaleAnim }] }]}>
-                <Image
-                    source={require('../../assets/images/icon.png')}
-                    style={styles.logo}
-                    contentFit="contain"
-                />
                 <Text style={styles.title}>SABEEL</Text>
                 <View style={styles.badge}>
                     <Text style={styles.badgeText}>MISSION INDÉPENDANTE</Text>

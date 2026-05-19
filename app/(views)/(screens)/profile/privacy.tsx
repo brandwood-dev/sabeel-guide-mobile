@@ -10,13 +10,13 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useTrans } from '@/hooks/useTrans';
-import { useThemeColors } from '@/hooks/useThemeColors';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 
 export default function PrivacyPage() {
     const router = useRouter();
     const { t, language } = useTrans();
     const colors = useThemeColors() as any;
-    const isDarkMode = false;
+    const isDarkMode = useIsDarkMode();
     const isRTL = language === 'ar';
 
     const TEXT_COLOR = isDarkMode ? '#FFFFFF' : '#111827';

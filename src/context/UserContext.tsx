@@ -34,8 +34,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [onboardingStep, setOnboardingStep] = useState<'none' | 'profile_tab' | 'personal_info'>('none');
     const [unreadMessagesCount, setUnreadMessagesCountState] = useState<number>(0);
 
-    const getRoleKey = (u: any, m: UserMode) => (u?.activeRole === 'agency' || m === 'agency' ? 'agency' : 'freelance');
-    const unreadKeyForRole = (roleKey: string) => `unread_messages_count_${roleKey}`;
+    const UNREAD_MESSAGES_KEY = 'unread_messages_count_global';
 
     // Load user from AsyncStorage on mount
     useEffect(() => {
@@ -53,8 +52,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
                         setShowAgencyIdPopup(false);
                     }
 
-                    const roleKey = getRoleKey(parsed, nextMode);
-                    const unreadRaw = await AsyncStorage.getItem(unreadKeyForRole(roleKey));
+                    const unreadRaw = await AsyncStorage.getItem(UNREAD_MESSAGES_KEY);
                     if (unreadRaw) {
                         const parsedUnread = Number(unreadRaw);
                         setUnreadMessagesCountState(Number.isFinite(parsedUnread) ? parsedUnread : 0);
@@ -72,8 +70,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const safe = Number.isFinite(nextRaw) ? Math.max(0, Math.floor(nextRaw)) : 0;
         setUnreadMessagesCountState(safe);
         try {
-            const roleKey = getRoleKey(user, userMode);
-            await AsyncStorage.setItem(unreadKeyForRole(roleKey), String(safe));
+            await AsyncStorage.setItem(UNREAD_MESSAGES_KEY, String(safe));
         } catch (e) {}
     };
 
@@ -93,8 +90,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Reload unread count for this role
         try {
-            const roleKey = getRoleKey(newUser, nextMode);
-            const unreadRaw = await AsyncStorage.getItem(unreadKeyForRole(roleKey));
+            const unreadRaw = await AsyncStorage.getItem(UNREAD_MESSAGES_KEY);
             const parsedUnread = unreadRaw ? Number(unreadRaw) : 0;
             setUnreadMessagesCountState(Number.isFinite(parsedUnread) ? parsedUnread : 0);
         } catch (e) {

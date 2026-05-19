@@ -20,6 +20,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useThemeColors } from '@/hooks/useThemeColors';
 import { useTrans } from '@/hooks/useTrans';
 import { ProfileMenuItem } from '@/components/common/ProfileMenuItem';
+import { useThemeContext } from '@/context/ThemeContext';
 
 const { width, height } = Dimensions.get('window');
 
@@ -40,13 +41,13 @@ export default function ProfilePage() {
 
     const [activeTab, setActiveTab] = useState(0);
     const [showQRModal, setShowQRModal] = useState(false);
-    const [darkMode, setDarkMode] = useState(false);
+    const { isDarkMode: darkMode, setDarkMode } = useThemeContext();
     const [locationEnabled, setLocationEnabled] = useState(true);
 
     const HEADER_FIXED = 160 + insets.top;
     const PRIMARY = colors.primary;
     const PAGE_BG = colors.background;
-    const CARD_BG = '#FFFFFF';
+    const CARD_BG = colors.surface;
     const TEXT = colors.secondary;
     const TEXT_SEC = colors.muted;
     const DIVIDER = colors.divider;
@@ -121,7 +122,7 @@ export default function ProfilePage() {
                 />
             </View>
 
-            <TouchableOpacity style={ss.logoutBtn} onPress={handleLogout}>
+            <TouchableOpacity style={[ss.logoutBtn, { backgroundColor: darkMode ? 'rgba(239, 68, 68, 0.15)' : '#FEE2E2' }]} onPress={handleLogout}>
                 <Ionicons name="log-out-outline" size={20} color="#EF4444" />
                 <Text style={ss.logoutText}>Se déconnecter</Text>
             </TouchableOpacity>
@@ -130,7 +131,7 @@ export default function ProfilePage() {
 
     return (
         <SafeAreaView style={{ flex: 1, backgroundColor: PAGE_BG }}>
-            <View style={[ss.header, { backgroundColor: '#FFFFFF', borderBottomColor: DIVIDER }]}>
+            <View style={[ss.header, { backgroundColor: CARD_BG, borderBottomColor: DIVIDER }]}>
                 <View style={ss.profileInfo}>
                     <Image source={{ uri: user.photo }} style={ss.avatar} />
                     <View>
@@ -147,12 +148,12 @@ export default function ProfilePage() {
 
             <Modal visible={showQRModal} transparent animationType="fade">
                 <View style={ss.modalOverlay}>
-                    <View style={ss.qrModal}>
+                    <View style={[ss.qrModal, { backgroundColor: CARD_BG }]}>
                         <TouchableOpacity style={ss.closeBtn} onPress={() => setShowQRModal(false)}>
                             <Ionicons name="close" size={24} color={TEXT} />
                         </TouchableOpacity>
                         <Text style={[ss.modalTitle, { color: TEXT }]}>Mon Code QR</Text>
-                        <View style={ss.qrPlaceholder}>
+                        <View style={[ss.qrPlaceholder, { backgroundColor: darkMode ? '#121824' : '#f9f9f9' }]}>
                             <Ionicons name="qr-code" size={150} color={PRIMARY} />
                         </View>
                         <Text style={[ss.idText, { color: PRIMARY }]}>ID: {user.uniqueIdentifier}</Text>

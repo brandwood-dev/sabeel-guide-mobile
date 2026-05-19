@@ -13,23 +13,29 @@ import {
     Platform,
     ImageBackground,
     Modal,
+    Image as RNImage,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5, Feather } from '@expo/vector-icons';
 import { theme } from '@/theme';
 import { Image } from 'expo-image';
 import Mapbox from '@rnmapbox/maps';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useThemeColors, useIsDarkMode } from '@/hooks/useThemeColors';
 import { useFocusEffect } from '@react-navigation/native';
 import { CustomAlert } from '@/components/common/CustomAlert';
 import { useUser } from '@/context/UserContext';
 import { getUserAvatarUrl } from '@/services/media';
 import { agenciesApi, sabeelGuideGroupsApi, trackingApi, reservationApi, freelanceGroupsApi, walletApi, notificationsApi, freelanceComplianceApi } from '@/services/api';
 import { notificationService } from '@/services/notificationService';
+import { useTrans } from '@/hooks/useTrans';
 
 const { width } = Dimensions.get('window');
 
 const HomeScreen = () => {
+    const colors = useThemeColors() as any;
+    const isDarkMode = useIsDarkMode();
     const router = useRouter();
+    const { t } = useTrans();
     const params = useLocalSearchParams();
     const [searchQuery, setSearchQuery] = useState('');
     const scrollY = useRef(new Animated.Value(0)).current;
@@ -68,7 +74,12 @@ const HomeScreen = () => {
     const [wallet, setWallet] = useState<{ id?: string; availableBalance: number; currency: string } | null>(null);
     const [transactions, setTransactions] = useState<any[]>([]);
 
-    const [recentPilgrims, setRecentPilgrims] = useState<Array<{ id: string; name: string; group: string; time: string; status: string }>>([]);
+    const walletDivisor = useMemo(() => {
+        const cur = String(wallet?.currency || 'TND').toUpperCase();
+        return cur === 'TND' ? 1000 : 100;
+    }, [wallet?.currency]);
+
+    const [recentPilgrims, setRecentPilgrims] = useState<Array<{ id: string; name: string; group: string; time: string; status: string; photo?: string }>>([]);
 
     const [agencyName, setAgencyName] = useState<string>('');
 
@@ -85,8 +96,8 @@ const HomeScreen = () => {
         const lastName = p?.lastName ?? p?.lastname ?? p?.last_name ?? '';
         const fromParts = `${String(firstName || '')} ${String(lastName || '')}`.trim();
         const fromFull = String(p?.fullName ?? p?.full_name ?? p?.name ?? '').trim();
-        return fromParts || fromFull || 'Pèlerin';
-    }, []);
+        return fromParts || fromFull || t('Pèlerin');
+    }, [t]);
 
     const unreadSosCount = useMemo(() => {
         const list = Array.isArray(sosAlerts) ? sosAlerts : [];
@@ -100,6 +111,8 @@ const HomeScreen = () => {
         try {
             const res = await notificationsApi.listMine({ limit: 50, offset: 0 });
             const items = Array.isArray(res?.data?.items) ? res.data.items : (Array.isArray(res?.data) ? res.data : []);
+
+            // Show/Count notifications from BOTH spaces (agency + freelance), even if activeRole differs.
             const unread = items.filter((n: any) => !n?.readAt).length;
             setUnreadNotificationsCount(Number.isFinite(unread) ? unread : 0);
 
@@ -107,11 +120,44 @@ const HomeScreen = () => {
                 const t = n?.data?.type ? String(n.data.type) : '';
                 return t.toLowerCase() === 'sos' || t.toLowerCase() === 'sos_alert';
             });
+
             setSosAlerts(sos);
-        } catch {
+        } catch (e) {
             // ignore
         }
     }, []);
+
+    const getSosStatus = useCallback((n: any): 'active' | 'in_progress' | 'resolved' => {
+        const resolved = Boolean(n?.readAt);
+        if (resolved) return 'resolved';
+        const raw = String(n?.data?.sosStatus || '').trim().toLowerCase();
+        if (raw === 'in_progress' || raw === 'inprogress' || raw === 'en_cours' || raw === 'encours') return 'in_progress';
+        if (raw === 'resolved') return 'resolved';
+        return 'active';
+    }, []);
+
+    const sosStatusLabel = useCallback((s: 'active' | 'in_progress' | 'resolved') => {
+        if (s === 'in_progress') return t('En cours');
+        if (s === 'resolved') return t('Résolu');
+        return t('En attente');
+    }, [t]);
+
+    const updateSosStatus = useCallback(
+        async (notificationId: string, status: 'active' | 'in_progress' | 'resolved') => {
+            if (!notificationId) return;
+            try {
+                await notificationsApi.updateSosStatus(String(notificationId), status);
+            } catch (e) {
+                // ignore
+            }
+            try {
+                await refreshNotifications();
+            } catch (e) {
+                // ignore
+            }
+        },
+        [refreshNotifications],
+    );
 
     const refreshCompliance = useCallback(async () => {
         const isFreelance = userMode === 'guide' && String((user as any)?.activeRole || '') === 'freelance';
@@ -124,7 +170,7 @@ const HomeScreen = () => {
         try {
             const res = await freelanceComplianceApi.getMe();
             setComplianceMe(res?.data || null);
-        } catch {
+        } catch (e) {
             setComplianceMe(null);
         } finally {
             setComplianceLoading(false);
@@ -139,13 +185,14 @@ const HomeScreen = () => {
     );
 
     useEffect(() => {
-        const unsubscribe = notificationService.addListener(() => {
+        const unsubscribe = notificationService.addListener((n: any) => {
+            const type = String(n?.type || '').toLowerCase();
+            if (type === 'sos_status') return;
             setUnreadNotificationsCount((prev) => prev + 1);
             refreshNotifications();
         });
-        return () => {
-            unsubscribe();
-        };
+
+        return () => unsubscribe();
     }, [refreshNotifications]);
 
     const latestSosAlert = useMemo(() => {
@@ -164,13 +211,13 @@ const HomeScreen = () => {
         const nameFromPilgrim = data?.pilgrim
             ? String(`${data?.pilgrim?.firstName || ''} ${data?.pilgrim?.lastName || ''}`).trim()
             : '';
-        const pilgrimName = String(data?.pilgrimName || nameFromPilgrim || 'Pèlerin');
+        const pilgrimName = String(data?.pilgrimName || nameFromPilgrim || t('Pèlerin'));
         const photoRaw = data?.photo
             ? String(data.photo)
             : (data?.pilgrim?.photo ? String(data.pilgrim.photo) : '');
         const photoUrl = getUserAvatarUrl(photoRaw) || photoRaw;
         return { pilgrimName, photoUrl };
-    }, [latestSosAlert]);
+    }, [latestSosAlert, t]);
 
     const trackingMarkers = useMemo(() => {
         return (Array.isArray(pilgrims) ? pilgrims : [])
@@ -179,11 +226,13 @@ const HomeScreen = () => {
                 const lng = p?.longitude !== null && p?.longitude !== undefined ? Number(p.longitude) : NaN;
                 const ok = Number.isFinite(lat) && Number.isFinite(lng) && p?.shareLocation !== false;
                 if (!ok) return null;
+                const rawPhoto = String(p?.photo || p?.pilgrimImageUrl || p?.imageUrl || '').trim();
+                const photoUrl = rawPhoto ? (getUserAvatarUrl(rawPhoto) || rawPhoto) : '';
                 return {
                     id: String(p?.id || ''),
                     name: resolvePilgrimName(p),
                     coords: [lng, lat] as any,
-                    photo: p?.photo ? (getUserAvatarUrl(String(p.photo)) || String(p.photo)) : '',
+                    photo: photoUrl,
                 };
             })
             .filter(Boolean);
@@ -208,25 +257,25 @@ const HomeScreen = () => {
         const contractDone = Boolean(complianceMe?.contractDone);
 
         if (eligible) {
-            return { label: 'Vérifié', color: '#16A34A', bg: '#E8F5E9', subtitle: 'Votre compte est vérifié.' };
+            return { label: t('Vérifié'), color: '#16A34A', bg: '#E8F5E9', subtitle: t('Votre compte est vérifié.') };
         }
 
         const remaining: string[] = [];
-        if (!documentsDone) remaining.push('Documents');
-        if (!emailVerified) remaining.push('Email');
-        if (!contractDone) remaining.push('Contrat');
+        if (!documentsDone) remaining.push(t('Documents'));
+        if (!emailVerified) remaining.push(t('Email'));
+        if (!contractDone) remaining.push(t('Contrat'));
 
         if (remaining.length === 0) {
-            return { label: 'En attente', color: '#2196F3', bg: '#E3F2FD', subtitle: 'Vérification en cours.' };
+            return { label: t('En attente'), color: '#2196F3', bg: '#E3F2FD', subtitle: t('Vérification en cours.') };
         }
 
         return {
-            label: 'Reste',
+            label: t('Reste'),
             color: '#FF9800',
             bg: '#FFF3E0',
-            subtitle: `À compléter: ${remaining.join(', ')}`,
+            subtitle: `${t('À compléter:')} ${remaining.join(', ')}`,
         };
-    }, [complianceMe]);
+    }, [complianceMe, t]);
 
     const fetchWallet = async () => {
         try {
@@ -238,12 +287,12 @@ const HomeScreen = () => {
                 setWallet({
                     id: walletRes.data.wallet.id ? String(walletRes.data.wallet.id) : undefined,
                     availableBalance: walletRes.data.wallet.availableBalance || 0,
-                    currency: walletRes.data.wallet.currency || 'MAD',
+                    currency: walletRes.data.wallet.currency || 'TND',
                 });
             }
             const items = Array.isArray(txRes?.data?.items) ? txRes.data.items : [];
             setTransactions(items);
-        } catch {}
+        } catch (e) {}
     };
 
     useEffect(() => {
@@ -278,36 +327,7 @@ const HomeScreen = () => {
                     }))
                     .filter((p: any) => p.id);
 
-                const items = raw
-                    .map((p: any) => {
-                        const updatedAtRaw = p?.updatedAt || p?.lastUpdate || p?.updated_at || null;
-                        const ts = updatedAtRaw ? Date.parse(String(updatedAtRaw)) : 0;
-                        const lat = p?.latitude !== null && p?.latitude !== undefined ? Number(p.latitude) : NaN;
-                        const lng = p?.longitude !== null && p?.longitude !== undefined ? Number(p.longitude) : NaN;
-                        const hasPosition = Number.isFinite(lat) && Number.isFinite(lng) && p?.shareLocation !== false;
-
-                        return {
-                            id: String(p?.id || ''),
-                            name: resolvePilgrimName(p),
-                            group: p?.groupId ? String(p.groupId) : '',
-                            ts,
-                            status: hasPosition ? 'Active' : 'Inactive',
-                            photo: p?.photo ? String(p.photo) : '',
-                        };
-                    })
-                    .filter((p: any) => p.id)
-                    .sort((a: any, b: any) => (b.ts || 0) - (a.ts || 0))
-                    .slice(0, 6)
-                    .map((p: any) => ({
-                        id: p.id,
-                        name: p.name,
-                        group: p.group,
-                        time: p.ts ? new Date(p.ts).toLocaleString() : '',
-                        status: p.status,
-                    }));
-
                 if (!mounted) return;
-                setRecentPilgrims(items);
                 if (isFreelance) {
                     try {
                         const reservationsRes = await reservationApi.getGuideReservations();
@@ -335,7 +355,7 @@ const HomeScreen = () => {
 
                         const pilgrimsFromReservations = Array.from(byPilgrimId.entries()).map(([pid, r]) => {
                             const summaryFullName = `${r?.pilgrimFirstName || ''} ${r?.pilgrimLastName || ''}`.trim();
-                            const name = String(r?.pilgrimName || '').trim() || summaryFullName || 'Pèlerin';
+                            const name = String(r?.pilgrimName || '').trim() || summaryFullName || t('Pèlerin');
                             const photo = String(r?.pilgrimImageUrl || '').trim();
                             return {
                                 id: pid,
@@ -349,13 +369,69 @@ const HomeScreen = () => {
                             };
                         });
 
+                        const freelanceRecents = pilgrimsFromReservations
+                            .map((p: any) => {
+                                const updatedAtRaw = p?.updatedAt || null;
+                                const ts = updatedAtRaw ? Date.parse(String(updatedAtRaw)) : 0;
+                                const rawPhoto = String(p?.photo || p?.pilgrimImageUrl || p?.imageUrl || '').trim();
+                                const photoUrl = rawPhoto ? (getUserAvatarUrl(rawPhoto) || rawPhoto) : '';
+                                return {
+                                    id: String(p?.id || ''),
+                                    name: String(p?.name || resolvePilgrimName(p) || t('Pèlerin')),
+                                    group: '',
+                                    ts,
+                                    status: 'Inactive',
+                                    photo: photoUrl,
+                                };
+                            })
+                            .filter((p: any) => p.id)
+                            .sort((a: any, b: any) => (b.ts || 0) - (a.ts || 0))
+                            .slice(0, 6)
+                            .map((p: any) => ({
+                                id: p.id,
+                                name: p.name,
+                                group: p.group,
+                                time: p.ts ? new Date(p.ts).toLocaleString() : '',
+                                status: p.status,
+                                photo: p.photo,
+                            }));
+
                         if (!mounted) return;
                         setPilgrims(pilgrimsFromReservations);
                         setPilgrimsCount(pilgrimsFromReservations.length);
-                    } catch {
+                        setRecentPilgrims(freelanceRecents);
+                    } catch (e) {
                         if (!mounted) return;
                         setPilgrims(mappedPilgrims);
                         setPilgrimsCount(mappedPilgrims.length);
+
+                        const fallbackRecents = mappedPilgrims
+                            .map((p: any) => {
+                                const updatedAtRaw = p?.updatedAt || null;
+                                const ts = updatedAtRaw ? Date.parse(String(updatedAtRaw)) : 0;
+                                const rawPhoto = String(p?.photo || p?.pilgrimImageUrl || p?.imageUrl || '').trim();
+                                const photoUrl = rawPhoto ? (getUserAvatarUrl(rawPhoto) || rawPhoto) : '';
+                                return {
+                                    id: String(p?.id || ''),
+                                    name: resolvePilgrimName(p),
+                                    group: p?.groupId ? String(p.groupId) : '',
+                                    ts,
+                                    status: 'Inactive',
+                                    photo: photoUrl,
+                                };
+                            })
+                            .filter((p: any) => p.id)
+                            .sort((a: any, b: any) => (b.ts || 0) - (a.ts || 0))
+                            .slice(0, 6)
+                            .map((p: any) => ({
+                                id: p.id,
+                                name: p.name,
+                                group: p.group,
+                                time: p.ts ? new Date(p.ts).toLocaleString() : '',
+                                status: p.status,
+                                photo: p.photo,
+                            }));
+                        setRecentPilgrims(fallbackRecents);
                     }
 
                     try {
@@ -367,7 +443,7 @@ const HomeScreen = () => {
                                 try {
                                     const detail = await freelanceGroupsApi.getById(String(g.id));
                                     return detail?.data?.group || null;
-                                } catch {
+                                } catch (e) {
                                     return null;
                                 }
                             }),
@@ -387,7 +463,7 @@ const HomeScreen = () => {
                         if (!mounted) return;
                         setGroups(mappedGroups);
                         setGroupsCount(mappedGroups.length);
-                    } catch {
+                    } catch (e) {
                         if (!mounted) return;
                         setGroups([]);
                         setGroupsCount(0);
@@ -395,6 +471,39 @@ const HomeScreen = () => {
 
                     return;
                 }
+
+                const items = raw
+                    .map((p: any) => {
+                        const updatedAtRaw = p?.updatedAt || p?.lastUpdate || p?.updated_at || null;
+                        const ts = updatedAtRaw ? Date.parse(String(updatedAtRaw)) : 0;
+                        const lat = p?.latitude !== null && p?.latitude !== undefined ? Number(p.latitude) : NaN;
+                        const lng = p?.longitude !== null && p?.longitude !== undefined ? Number(p.longitude) : NaN;
+                        const hasPosition = Number.isFinite(lat) && Number.isFinite(lng) && p?.shareLocation !== false;
+
+                        const rawPhoto = String(p?.photo || p?.pilgrimImageUrl || p?.imageUrl || '').trim();
+                        const photoUrl = rawPhoto ? (getUserAvatarUrl(rawPhoto) || rawPhoto) : '';
+                        return {
+                            id: String(p?.id || ''),
+                            name: resolvePilgrimName(p),
+                            group: p?.groupId ? String(p.groupId) : '',
+                            ts,
+                            status: hasPosition ? 'Active' : 'Inactive',
+                            photo: photoUrl,
+                        };
+                    })
+                    .filter((p: any) => p.id)
+                    .sort((a: any, b: any) => (b.ts || 0) - (a.ts || 0))
+                    .slice(0, 6)
+                    .map((p: any) => ({
+                        id: p.id,
+                        name: p.name,
+                        group: p.group,
+                        time: p.ts ? new Date(p.ts).toLocaleString() : '',
+                        status: p.status,
+                        photo: p.photo,
+                    }));
+
+                setRecentPilgrims(items);
 
                 setPilgrims(mappedPilgrims);
                 setPilgrimsCount(mappedPilgrims.length);
@@ -413,12 +522,12 @@ const HomeScreen = () => {
                     if (!mounted) return;
                     setGroups(mappedGroups);
                     setGroupsCount(mappedGroups.length);
-                } catch {
+                } catch (e) {
                     if (!mounted) return;
                     setGroups([]);
                     setGroupsCount(0);
                 }
-            } catch {
+            } catch (e) {
                 if (!mounted) return;
                 setRecentPilgrims([]);
                 setPilgrims([]);
@@ -449,7 +558,7 @@ const HomeScreen = () => {
                 const name = String(data?.agencyName || data?.name || '').trim();
                 if (!mounted) return;
                 setAgencyName(name);
-            } catch {
+            } catch (e) {
                 if (!mounted) return;
                 setAgencyName('');
             }
@@ -475,8 +584,8 @@ const HomeScreen = () => {
 
     const handleWithdraw = () => {
         const available = wallet?.availableBalance || 0;
-        if (available < 50000) { // 500.00 MAD in cents
-            showAlert("Solde Insuffisant", "Un solde minimum de 500 MAD est requis pour effectuer un retrait.", "warning");
+        if (available < 50000) { // 500.00 TND in cents
+            showAlert("Solde Insuffisant", "Un solde minimum de 500 TND est requis pour effectuer un retrait.", "warning");
             return;
         }
         if (!bankLinked) {
@@ -495,16 +604,16 @@ const HomeScreen = () => {
     });
 
     return (
-        <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="dark-content" />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
 
             {/* Header / AppBar */}
-            <View style={styles.header}>
+            <View style={[styles.header, { backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.divider }]}>
                 <View style={styles.headerTop}>
-                    <Text style={styles.headerTitle}>Dashboard</Text>
+                    <Text style={[styles.headerTitle, { color: colors.text }]}>{t('Tableau de bord')}</Text>
 
                     <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/notifications')}>
-                        <Ionicons name="notifications-outline" size={24} color={theme.colors.text} />
+                        <Ionicons name="notifications-outline" size={24} color={colors.text} />
                         {unreadNotificationsCount > 0 ? (
                             <View style={styles.badge}>
                                 {unreadNotificationsCount > 9 ? (
@@ -565,7 +674,7 @@ const HomeScreen = () => {
                 {/* Combined Stats Grid Section */}
                 <View style={styles.activityGrid}>
                     <View style={styles.sectionHeaderCompact}>
-                        <Text style={styles.sectionTitleRefined}>Aperçu de l&apos;activité</Text>
+                        <Text style={styles.sectionTitleRefined}>{t("Aperçu de l'activité")}</Text>
                     </View>
                     <View style={styles.activityCard}>
                         {/* Top row: Wallet & Groups */}
@@ -574,16 +683,16 @@ const HomeScreen = () => {
                                 <TouchableOpacity
                                     style={[styles.activityItem, { borderRightWidth: 1, borderRightColor: '#F0F0F0' }]}
                                     onPress={async () => {
-                            await fetchWallet();
-                            setWalletModalVisible(true);
-                        }}
+                                        await fetchWallet();
+                                        setWalletModalVisible(true);
+                                    }}
                                 >
                                     <View style={[styles.activityIconWrap, { backgroundColor: theme.colors.primary + '15' }]}>
                                         <Ionicons name="wallet-outline" size={20} color={theme.colors.primary} />
                                     </View>
                                     <View>
-                                        <Text style={styles.activityValue}>{wallet ? ((wallet.availableBalance / 100).toFixed(2)) : '0.00'} {wallet?.currency || 'MAD'}</Text>
-                                        <Text style={styles.activityLabel}>Wallet</Text>
+                                        <Text style={styles.activityValue}>{wallet ? ((wallet.availableBalance / walletDivisor).toFixed(2)) : '0.00'} {wallet?.currency || 'TND'}</Text>
+                                        <Text style={styles.activityLabel}>{t('Wallet')}</Text>
                                     </View>
                                 </TouchableOpacity>
                             ) : (
@@ -593,9 +702,9 @@ const HomeScreen = () => {
                                     </View>
                                     <View>
                                         <Text style={styles.activityValue} numberOfLines={1}>
-                                            {agencyName || 'Mon agence'}
+                                            {agencyName || t('Mon agence')}
                                         </Text>
-                                        <Text style={styles.activityLabel}>Agence</Text>
+                                        <Text style={styles.activityLabel}>{t('Agence')}</Text>
                                     </View>
                                 </View>
                             )}
@@ -608,7 +717,7 @@ const HomeScreen = () => {
                                 </View>
                                 <View>
                                     <Text style={styles.activityValue}>{groupsCount}</Text>
-                                    <Text style={styles.activityLabel}>Groupes</Text>
+                                    <Text style={styles.activityLabel}>{t('Groupes')}</Text>
                                 </View>
                             </TouchableOpacity>
                         </View>
@@ -626,7 +735,7 @@ const HomeScreen = () => {
                                 </View>
                                 <View>
                                     <Text style={styles.activityValue}>{pilgrimsCount}</Text>
-                                    <Text style={styles.activityLabel}>Pèlerins</Text>
+                                    <Text style={styles.activityLabel}>{t('Pèlerins')}</Text>
                                 </View>
                             </TouchableOpacity>
                             <TouchableOpacity
@@ -638,7 +747,7 @@ const HomeScreen = () => {
                                 </View>
                                 <View>
                                     <Text style={styles.activityValue}>{unreadSosCount}</Text>
-                                    <Text style={styles.activityLabel}>Alert</Text>
+                                    <Text style={styles.activityLabel}>{t('Alert')}</Text>
                                 </View>
                             </TouchableOpacity>
                         </View>
@@ -664,9 +773,9 @@ const HomeScreen = () => {
                             </View>
                         )}
                         <View style={styles.alertMain}>
-                            <Text style={styles.alertTitle}>SOS Alert</Text>
+                            <Text style={styles.alertTitle}>{t('SOS Alert')}</Text>
                             <Text style={styles.alertDesc} numberOfLines={2}>
-                                {latestSosUi?.pilgrimName || 'Pèlerin'}
+                                {latestSosUi?.pilgrimName || t('Pèlerin')}
                             </Text>
                         </View>
                         <View style={styles.alertClose}>
@@ -675,115 +784,123 @@ const HomeScreen = () => {
                     </TouchableOpacity>
                 )}
 
-
-
                 {/* Map Section */}
-                <View style={styles.sectionHeaderRefined}>
-                    <Text style={styles.sectionTitleRefined}>Tracking en temps réel</Text>
-                    <TouchableOpacity onPress={() => router.push('/tracking')}>
-                        <Text style={styles.actionTextSmall}>Plein écran</Text>
-                    </TouchableOpacity>
-                </View>
-                <View style={styles.mapContainer}>
-                    <View style={styles.mapPlaceholder}>
-                        {!trackingMarkers.length ? (
-                            <View style={{ flex: 1 }}>
-                                <Image
-                                    source={{ uri: 'https://images.unsplash.com/photo-1526778545894-62b44c2860b1?w=800' }}
-                                    style={styles.mapImage}
-                                />
-                                <View style={styles.mapOverlay}>
-                                    <View style={styles.mapBadge}>
-                                        <View style={styles.liveIndicator} />
-                                        <Text style={styles.liveText}>LIVE</Text>
-                                    </View>
-                                </View>
-                            </View>
-                        ) : (
-                            <View style={{ flex: 1 }}>
-                                <Mapbox.MapView
-                                    style={styles.mapImage}
-                                    styleURL={Mapbox.StyleURL.Street}
-                                    logoEnabled={false}
-                                    attributionEnabled={false}
-                                    compassEnabled={false}
-                                >
-                                    <Mapbox.Camera
-                                        ref={trackingCameraRef}
-                                        zoomLevel={5}
-                                        centerCoordinate={(trackingMarkers as any)[0]?.coords || [0, 0]}
-                                        animationDuration={600}
+                <View>
+                    <View style={styles.sectionHeaderRefined}>
+                        <Text style={styles.sectionTitleRefined}>{t('Tracking en temps réel')}</Text>
+                        <TouchableOpacity onPress={() => router.push('/tracking')}>
+                            <Text style={styles.actionTextSmall}>{t('Plein écran')}</Text>
+                        </TouchableOpacity>
+                    </View>
+                    <View style={styles.mapContainer}>
+                        <View style={styles.mapPlaceholder}>
+                            {!trackingMarkers.length ? (
+                                <View style={{ flex: 1 }}>
+                                    <Image
+                                        source={{ uri: 'https://images.unsplash.com/photo-1526778545894-62b44c2860b1?w=800' }}
+                                        style={styles.mapImage}
                                     />
-                                    {(trackingMarkers as any).map((m: any) => (
-                                        <Mapbox.PointAnnotation key={m.id} id={m.id} coordinate={m.coords}>
-                                            <View style={[styles.markerBubble, { borderColor: theme.colors.primary }]}>
-                                                {m.photo ? (
-                                                    <Image source={{ uri: m.photo }} style={styles.markerAvatar} />
-                                                ) : (
-                                                    <View
-                                                        style={[
-                                                            styles.markerAvatar,
-                                                            { backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-                                                        ]}
-                                                    >
-                                                        <Text
-                                                            style={{
-                                                                fontSize: 10,
-                                                                fontWeight: '900',
-                                                                color: theme.colors.secondary,
-                                                            }}
-                                                        >
-                                                            {String(m.name || 'P').slice(0, 1).toUpperCase()}
-                                                        </Text>
-                                                    </View>
-                                                )}
-                                            </View>
-                                        </Mapbox.PointAnnotation>
-                                    ))}
-                                </Mapbox.MapView>
-                                <View style={styles.mapOverlay}>
-                                    <View style={styles.mapBadge}>
-                                        <View style={styles.liveIndicator} />
-                                        <Text style={styles.liveText}>LIVE</Text>
+                                    <View style={styles.mapOverlay}>
+                                        <View style={styles.mapBadge}>
+                                            <View style={styles.liveIndicator} />
+                                            <Text style={styles.liveText}>{t('LIVE')}</Text>
+                                        </View>
                                     </View>
-                                    <TouchableOpacity style={styles.mapFab} onPress={fitTrackingMarkers}>
-                                        <Ionicons name="locate" size={24} color={theme.colors.primary} />
-                                    </TouchableOpacity>
                                 </View>
-                            </View>
-                        )}
+                            ) : (
+                                <View style={{ flex: 1 }}>
+                                    <Mapbox.MapView
+                                        style={styles.mapImage}
+                                        styleURL={Mapbox.StyleURL.Street}
+                                        logoEnabled={false}
+                                        attributionEnabled={false}
+                                        compassEnabled={false}
+                                    >
+                                        <Mapbox.Camera
+                                            ref={trackingCameraRef}
+                                            zoomLevel={5}
+                                            centerCoordinate={(trackingMarkers as any)[0]?.coords || [0, 0]}
+                                            animationDuration={600}
+                                        />
+                                        {(trackingMarkers as any).map((m: any) => (
+                                            <Mapbox.PointAnnotation key={m.id} id={m.id} coordinate={m.coords}>
+                                                <View style={[styles.markerBubble, { borderColor: theme.colors.primary }]} >
+                                                    {m.photo ? (
+                                                        <RNImage source={{ uri: m.photo }} style={styles.markerAvatar} />
+                                                    ) : (
+                                                        <View
+                                                            style={[
+                                                                styles.markerAvatar,
+                                                                { backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+                                                            ]}
+                                                        >
+                                                            <Text
+                                                                style={{
+                                                                    fontSize: 10,
+                                                                    fontWeight: '900',
+                                                                    color: theme.colors.secondary,
+                                                                }}
+                                                            >
+                                                                {String(m.name || 'P').slice(0, 1).toUpperCase()}
+                                                            </Text>
+                                                        </View>
+                                                    )}
+                                                </View>
+                                            </Mapbox.PointAnnotation>
+                                        ))}
+                                    </Mapbox.MapView>
+                                    <View style={styles.mapOverlay}>
+                                        <View style={styles.mapBadge}>
+                                            <View style={styles.liveIndicator} />
+                                            <Text style={styles.liveText}>{t('LIVE')}</Text>
+                                        </View>
+                                        <TouchableOpacity style={styles.mapFab} onPress={fitTrackingMarkers}>
+                                            <Ionicons name="locate" size={24} color={theme.colors.primary} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            )}
+                        </View>
                     </View>
                 </View>
 
-                {recentPilgrims.length ? (
+                {Array.isArray(recentPilgrims) && recentPilgrims.length > 0 ? (
                     <View>
                         <View style={styles.sectionHeaderRefined}>
-                            <Text style={styles.sectionTitleRefined}>Pèlerins Récents</Text>
-                            <TouchableOpacity onPress={() => router.push('/tracking')}>
-                                <Text style={styles.actionTextSmall}>Tout voir</Text>
+                            <Text style={styles.sectionTitleRefined}>{t('Pèlerins Récents')}</Text>
+                            <TouchableOpacity onPress={() => router.push('/(views)/(tabs)/umrah' as any)}>
+                                <Text style={styles.actionTextSmall}>{t('Tout voir')}</Text>
                             </TouchableOpacity>
                         </View>
                         <View style={styles.pilgrimList}>
-                            {(recentPilgrims as any[]).map((item) => (
-                                <View key={item.id} style={styles.pilgrimItem}>
-                                    <View style={styles.pilgrimInfo}>
-                                        <View style={styles.pilgrimAvatarPlaceholder}>
-                                            <Text style={styles.avatarText}>{String(item?.name || 'P').slice(0, 1)}</Text>
-                                        </View>
-                                        <View>
-                                            <Text style={styles.pilgrimName}>{item.name}</Text>
-                                            <View style={styles.pilgrimSubRow}>
-                                                <Text style={styles.pilgrimGroup}>{item.group || '-'}</Text>
-                                                <Text style={styles.dot}>•</Text>
-                                                <Text style={styles.pilgrimTime}>{item.time}</Text>
+                            {(recentPilgrims as any[]).map((item) => {
+                                const rawPhoto = String(item?.photo || '').trim();
+                                const photoUrl = rawPhoto ? (getUserAvatarUrl(rawPhoto) || rawPhoto) : '';
+                                return (
+                                    <View key={item.id} style={styles.pilgrimItem}>
+                                        <View style={styles.pilgrimInfo}>
+                                            {photoUrl ? (
+                                                <RNImage source={{ uri: photoUrl }} style={styles.pilgrimAvatarPlaceholder} />
+                                            ) : (
+                                                <View style={styles.pilgrimAvatarPlaceholder}>
+                                                    <Text style={styles.avatarText}>{String(item?.name || 'P').slice(0, 1)}</Text>
+                                                </View>
+                                            )}
+                                            <View>
+                                                <Text style={styles.pilgrimName}>{item.name}</Text>
+                                                <View style={styles.pilgrimSubRow}>
+                                                    <Text style={styles.pilgrimGroup}>{item.group || '-'}</Text>
+                                                    <Text style={styles.dot}>•</Text>
+                                                    <Text style={styles.pilgrimTime}>{item.time}</Text>
+                                                </View>
                                             </View>
                                         </View>
+                                        <View style={[styles.statusTag, { backgroundColor: item.status === 'Active' ? '#E8F5E9' : '#FFF3E0' }]}>
+                                            <Text style={[styles.statusTagText, { color: item.status === 'Active' ? '#4CAF50' : '#FF9800' }]}>{item.status}</Text>
+                                        </View>
                                     </View>
-                                    <View style={[styles.statusTag, { backgroundColor: item.status === 'Active' ? '#E8F5E9' : '#FFF3E0' }]}>
-                                        <Text style={[styles.statusTagText, { color: item.status === 'Active' ? '#4CAF50' : '#FF9800' }]}>{item.status}</Text>
-                                    </View>
-                                </View>
-                            ))}
+                                );
+                            })}
                         </View>
                     </View>
                 ) : null}
@@ -792,9 +909,9 @@ const HomeScreen = () => {
                     <View style={styles.kycSection}>
                         <View style={styles.kycCard}>
                             <View style={styles.kycInfo}>
-                                <Text style={styles.kycTitle}>Statut du compte KYC</Text>
+                                <Text style={styles.kycTitle}>{t('Statut du compte KYC')}</Text>
                                 <Text style={styles.kycSub}>
-                                    {complianceLoading ? 'Chargement...' : computeKycUi().subtitle}
+                                    {complianceLoading ? t('Chargement...') : computeKycUi().subtitle}
                                 </Text>
                             </View>
                             <View style={[styles.kycBadge, { backgroundColor: computeKycUi().bg }]}>
@@ -821,7 +938,7 @@ const HomeScreen = () => {
                         <View style={styles.walletSheet}>
                             <View style={styles.sheetHandle} />
                             <View style={styles.sheetHeader}>
-                                <Text style={styles.sheetTitle}>Mon Portefeuille</Text>
+                                <Text style={styles.sheetTitle}>{t('Mon Portefeuille')}</Text>
                                 <TouchableOpacity onPress={() => setWalletModalVisible(false)} style={styles.sheetCloseBtn}>
                                     <Ionicons name="close" size={24} color={theme.colors.secondary} />
                                 </TouchableOpacity>
@@ -833,25 +950,29 @@ const HomeScreen = () => {
                                 imageStyle={{ borderRadius: 24 }}
                             >
                                 <View style={styles.walletCardOverlay}>
-                                    <Text style={styles.balanceLabel}>Solde Disponible</Text>
-                                    <Text style={styles.balanceMain}>{wallet ? ((wallet.availableBalance / 100).toFixed(2)) : '0.00'} {wallet?.currency || 'MAD'}</Text>
+                                    <Text style={styles.balanceLabel}>{t('Solde Disponible')}</Text>
+                                    <Text style={styles.balanceMain}>{wallet ? ((wallet.availableBalance / walletDivisor).toFixed(2)) : '0.00'} {wallet?.currency || 'TND'}</Text>
                                     <TouchableOpacity style={styles.withdrawBtnNew} onPress={handleWithdraw}>
                                         <MaterialCommunityIcons name="bank-transfer-out" size={22} color="#fff" />
-                                        <Text style={styles.withdrawBtnText}>Retirer l&apos;argent</Text>
+                                        <Text style={styles.withdrawBtnText}>{t("Retirer l'argent")}</Text>
                                     </TouchableOpacity>
                                 </View>
                             </ImageBackground>
 
                             <View style={styles.historySection}>
                                 <View style={styles.historyHeader}>
-                                    <Text style={styles.historyTitle}>Historique des transactions</Text>
-                                    <Text style={styles.historyAction}>Tout voir</Text>
+                                    <Text style={styles.historyTitle}>{t('Historique des transactions')}</Text>
+                                    <TouchableOpacity onPress={() => router.push('/(views)/(screens)/wallet/history' as any)}>
+                                        <Text style={styles.historyAction}>Tout voir</Text>
+                                    </TouchableOpacity>
                                 </View>
                                 <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 300 }}>
                                     {transactions.map(tx => {
                                         const incoming = String(tx.toWalletId || '') === String(wallet?.id);
                                         const amount = typeof tx.amount === 'number' ? tx.amount : 0;
-                                        const amountText = `${(amount / 100).toFixed(2)} ${tx.currency || 'MAD'}`;
+                                        const txCur = String(tx.currency || wallet?.currency || 'TND').toUpperCase();
+                                        const txDivisor = txCur === 'TND' ? 1000 : 100;
+                                        const amountText = `${(amount / txDivisor).toFixed(2)} ${txCur}`;
                                         const sign = incoming ? '+' : '-';
                                         const typeLabel = tx.type?.toUpperCase().includes('WITHDRAWAL') ? 'Withdrawal' :
                                                           tx.type?.toUpperCase().includes('EARNING') ? 'Incoming' :
@@ -907,7 +1028,7 @@ const HomeScreen = () => {
                     <View style={styles.walletSheet}>
                         <View style={styles.sheetHandle} />
                         <View style={styles.sheetHeader}>
-                            <Text style={styles.sheetTitle}>Mes Groupes ({groupsCount})</Text>
+                            <Text style={styles.sheetTitle}>{`${t('Mes Groupes')} (${groupsCount})`}</Text>
                             <TouchableOpacity onPress={() => setGroupsModalVisible(false)} style={styles.sheetCloseBtn}>
                                 <Ionicons name="close" size={24} color={theme.colors.secondary} />
                             </TouchableOpacity>
@@ -920,7 +1041,7 @@ const HomeScreen = () => {
                                     </View>
                                     <View style={{ flex: 1 }}>
                                         <Text style={styles.modalListTitle}>{String(g?.name || 'Groupe')}</Text>
-                                        <Text style={styles.modalListSub}>{g?.departureDate ? `Départ: ${g.departureDate}` : ''}</Text>
+                                        <Text style={styles.modalListSub}>{g?.departureDate ? `${t('Départ:')} ${g.departureDate}` : ''}</Text>
                                     </View>
                                     <Text style={styles.modalListValue}>{Number(g?.pilgrimsCount || 0)}</Text>
                                 </View>
@@ -942,14 +1063,22 @@ const HomeScreen = () => {
                     <View style={styles.walletSheet}>
                         <View style={styles.sheetHandle} />
                         <View style={styles.sheetHeader}>
-                            <Text style={styles.sheetTitle}>Tous les Pèlerins ({pilgrimsCount})</Text>
+                            <Text style={styles.sheetTitle}>{`${t('Tous les Pèlerins')} (${pilgrimsCount})`}</Text>
                             <TouchableOpacity onPress={() => setPilgrimsModalVisible(false)} style={styles.sheetCloseBtn}>
                                 <Ionicons name="close" size={24} color={theme.colors.secondary} />
                             </TouchableOpacity>
                         </View>
                         <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 450 }}>
                             {pilgrims.map((p: any) => (
-                                <View key={String(p.id)} style={styles.modalListItem}>
+                                <TouchableOpacity
+                                    key={String(p.id)}
+                                    style={styles.modalListItem}
+                                    activeOpacity={0.85}
+                                    onPress={() => {
+                                        setPilgrimsModalVisible(false);
+                                        router.push('/(views)/(tabs)/umrah' as any);
+                                    }}
+                                >
                                     <View style={[styles.modalListIcon, { backgroundColor: theme.colors.primary + '15' }]}>
                                         <Ionicons name="person-outline" size={20} color={theme.colors.primary} />
                                     </View>
@@ -957,7 +1086,7 @@ const HomeScreen = () => {
                                         <Text style={styles.modalListTitle}>{resolvePilgrimName(p)}</Text>
                                         <Text style={styles.modalListSub}>{String(p?.phoneNumber || p?.phone || '')}</Text>
                                     </View>
-                                </View>
+                                </TouchableOpacity>
                             ))}
                         </ScrollView>
                     </View>
@@ -976,7 +1105,7 @@ const HomeScreen = () => {
                     <View style={styles.walletSheet}>
                         <View style={styles.sheetHandle} />
                         <View style={styles.sheetHeader}>
-                            <Text style={styles.sheetTitle}>SOS Alert</Text>
+                            <Text style={styles.sheetTitle}>{t('SOS Alert')}</Text>
                             <TouchableOpacity onPress={() => setSosModalVisible(false)} style={styles.sheetCloseBtn}>
                                 <Ionicons name="close" size={24} color={theme.colors.secondary} />
                             </TouchableOpacity>
@@ -995,7 +1124,7 @@ const HomeScreen = () => {
                                         const nameFromPilgrim = data?.pilgrim
                                             ? String(`${data?.pilgrim?.firstName || ''} ${data?.pilgrim?.lastName || ''}`).trim()
                                             : '';
-                                        const pilgrimName = String(data?.pilgrimName || nameFromPilgrim || 'Pèlerin');
+                                        const pilgrimName = String(data?.pilgrimName || nameFromPilgrim || t('Pèlerin'));
 
                                         const latRaw =
                                             data?.latitude !== undefined
@@ -1009,6 +1138,7 @@ const HomeScreen = () => {
                                         const lng = lngRaw !== null && lngRaw !== undefined ? Number(lngRaw) : NaN;
                                         const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
                                         const resolved = Boolean(a?.readAt);
+                                        const status = getSosStatus(a);
                                         const photo = data?.photo
                                             ? String(data.photo)
                                             : (data?.pilgrim?.photo ? String(data.pilgrim.photo) : '');
@@ -1021,28 +1151,29 @@ const HomeScreen = () => {
                                                 activeOpacity={0.85}
                                                 onPress={() => {
                                                     if (hasCoords) {
-                                                        setSosModalVisible(false);
-                                                        router.push({
-                                                            pathname: '/tracking' as any,
-                                                            params: {
-                                                                focusPilgrimId: data?.pilgrimUserId
-                                                                    ? String(data.pilgrimUserId)
-                                                                    : (data?.pilgrim?.id ? String(data.pilgrim.id) : ''),
-                                                                focusLat: String(lat),
-                                                                focusLng: String(lng),
-                                                            },
-                                                        });
+                                                        const nav = () => {
+                                                            setSosModalVisible(false);
+                                                            router.push({
+                                                                pathname: '/tracking' as any,
+                                                                params: {
+                                                                    focusPilgrimId: data?.pilgrimUserId
+                                                                        ? String(data.pilgrimUserId)
+                                                                        : (data?.pilgrim?.id ? String(data.pilgrim.id) : ''),
+                                                                    focusLat: String(lat),
+                                                                    focusLng: String(lng),
+                                                                },
+                                                            });
+                                                        };
+
+                                                        // When navigating to a pilgrim, automatically set SOS to in_progress.
+                                                        if (a?.id && status === 'active') {
+                                                            updateSosStatus(String(a.id), 'in_progress').finally(nav);
+                                                        } else {
+                                                            nav();
+                                                        }
                                                     }
                                                 }}
                                             >
-                                                <View style={[styles.modalListIconWrap, { backgroundColor: resolved ? '#E8F5E9' : '#FFECEC' }]}>
-                                                    <Ionicons
-                                                        name={resolved ? 'checkmark-circle-outline' : 'alert-circle-outline'}
-                                                        size={20}
-                                                        color={resolved ? '#16A34A' : '#FF3B30'}
-                                                    />
-                                                </View>
-
                                                 {photoUrl ? (
                                                     <View style={{ width: 42, height: 42, borderRadius: 21, overflow: 'hidden', marginRight: 10 }}>
                                                         <Image source={{ uri: photoUrl }} style={{ width: 42, height: 42 }} />
@@ -1054,46 +1185,63 @@ const HomeScreen = () => {
                                                         {pilgrimName}
                                                     </Text>
                                                     <Text style={styles.modalListSub} numberOfLines={2}>
-                                                        {String(a?.title || 'Alerte SOS')}
+                                                        {`${String(a?.title || t('Alerte SOS'))} • ${sosStatusLabel(status)}`}
                                                         {hasCoords ? ` • ${lat.toFixed(5)}, ${lng.toFixed(5)}` : ''}
                                                     </Text>
                                                 </View>
 
                                                 {!resolved ? (
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                                        <TouchableOpacity
+                                                            style={[styles.modalActionBtn, { backgroundColor: '#FFF7ED' }]}
+                                                            onPress={async () => {
+                                                                if (!a?.id) return;
+                                                                await updateSosStatus(String(a.id), 'in_progress');
+                                                            }}
+                                                        >
+                                                            <Text style={[styles.modalActionBtnText, { color: '#F97316' }]}>{t('En cours')}</Text>
+                                                        </TouchableOpacity>
+                                                        <TouchableOpacity
+                                                            style={[styles.modalActionBtn, { backgroundColor: '#E8F5E9' }]}
+                                                            onPress={async () => {
+                                                                if (!a?.id) return;
+                                                                await updateSosStatus(String(a.id), 'resolved');
+                                                            }}
+                                                        >
+                                                            <Text style={[styles.modalActionBtnText, { color: '#16A34A' }]}>{t('Résoudre')}</Text>
+                                                        </TouchableOpacity>
+                                                    </View>
+                                                ) : (
                                                     <TouchableOpacity
-                                                        style={styles.modalActionBtn}
+                                                        style={[styles.modalActionBtn, { backgroundColor: '#E8F5E9' }]}
                                                         onPress={async () => {
-                                                            try {
-                                                                if (a?.id) {
-                                                                    await notificationsApi.markRead(String(a.id));
-                                                                    await refreshNotifications();
+                                                            if (a?.id) {
+                                                                try {
+                                                                    await notificationsApi.deleteOne(String(a.id));
+                                                                } catch (e) {
+                                                                    // ignore
                                                                 }
-                                                            } catch {
-                                                                // ignore
                                                             }
+                                                            setSosAlerts((prev) => (Array.isArray(prev) ? prev.filter((x: any) => String(x?.id) !== String(a?.id)) : []));
                                                         }}
                                                     >
-                                                        <Text style={styles.modalActionBtnText}>Résoudre</Text>
-                                                    </TouchableOpacity>
-                                                ) : (
-                                                    <View style={[styles.modalActionBtn, { backgroundColor: '#E8F5E9' }]}>
                                                         <Text style={[styles.modalActionBtnText, { color: '#16A34A' }]}>OK</Text>
-                                                    </View>
+                                                    </TouchableOpacity>
                                                 )}
                                             </TouchableOpacity>
                                         );
                                     })
                             ) : (
                                 <View style={styles.modalEmptyWrap}>
-                                    <Text style={styles.modalEmptyTitle}>Aucune alerte SOS</Text>
-                                    <Text style={styles.modalEmptySub}>Les alertes SOS reçues s'afficheront ici.</Text>
+                                    <Text style={styles.modalEmptyTitle}>{t('Aucune alerte SOS')}</Text>
+                                    <Text style={styles.modalEmptySub}>{t('Les alertes SOS reçues s\'afficheront ici.')}</Text>
                                 </View>
                             )}
                         </ScrollView>
                     </View>
                 </View>
             </Modal>
-        </SafeAreaView >
+        </SafeAreaView>
     );
 };
 
